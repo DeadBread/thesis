@@ -477,6 +477,7 @@ class Resolver:
         print(self.paths[doc_id])
 
         self.text_builder.init_with_file(path, doc_id)
+        self.text = self.text_builder.get_text()
 
         i = 0.0
         self.not_founders = 0
@@ -484,7 +485,11 @@ class Resolver:
             self.build_prediction_list()
             for pronoun in self.pred_list:
                 res = self.predict_pronoun_proba(doc_id, pronoun)
-                answer_sh = self.answer_dict[doc_id][pronoun.sh]
+                try:
+                    answer_sh = self.answer_dict[doc_id][pronoun.sh]
+                except:
+                    print ("not found pronoun at", pronoun.sh, "at answer dict of doc", doc_id)
+                    continue
 
                 if res is None:
                     continue
@@ -519,7 +524,9 @@ class Resolver:
 
 
     def predict_pronoun_proba(self, text_id, pronoun):
-        cand_list = self.build_candidates_list(pronoun.sh)
+        cand_list = self.build_candidates_list(pronoun)
+
+        print("pronoun is ", pronoun.field('text'))
 
         if cand_list is None:
             print ("no candidates for pronoun ", pronoun.field("text"), "at ", pronoun.sh)
@@ -528,12 +535,15 @@ class Resolver:
         reverse_probas = dict()
         for candidate in cand_list:
             feats = self.build_features_list(candidate, pronoun)
-            res = self.classifier.predict_proba(feats)
-            reverse_probas[res] = candidate
+            res = self.classifier.predict_proba(np.array(feats).reshape(1, -1))
+            print("candidate", candidate.field("text"), candidate.sh, res)
+            reverse_probas[res[0][1]] = candidate
 
         antecedent = reverse_probas[max(reverse_probas.keys())]
 
         print("pronoun ", pronoun.field('text'), "at ", pronoun.sh, "refers to ", antecedent.field('text'), "at ", antecedent.sh)
+
+        pronoun.predicted = True
 
         return antecedent.sh
 
@@ -740,7 +750,13 @@ class Resolver:
         if candidate.field("deprel") == pronoun.field("deprel"):
             synt_parallel_feature = 1
             # print("look for pronoun", pronoun.field('text'), pronoun.field('index') , "in sentence", pronoun.field('sentence') )
-            head_pron = self.text.get_sentence(pronoun.field('sentence')).find_in_sentence(pronoun.field('head'))
+            try:
+                head_pron = self.text.get_sentence(pronoun.field('sentence')).find_in_sentence(pronoun.field('head'))
+            except AttributeError:
+                print("pronoun number", pronoun.field('sentence'))
+                for i in [a.index for a in self.text.get_sent_list()]:
+                    print("sentences:", i)
+
             head_candidate = self.text.get_sentence(candidate.field('sentence')).find_in_sentence(candidate.field('head'))
             if head_candidate is not None and head_pron is not None and head_candidate.field('deprel') == head_pron.field('deprel'):
                 synt_parallel_feature = 3
@@ -757,11 +773,11 @@ class Resolver:
         similarity_feature = 0
         left_neighbour = self.text.find_word_by_id(pronoun.field('index') - 1)
 
-        if left_neighbour.field('punct text') != '_':
+        if left_neighbour is not None and left_neighbour.field('punct text') != '_':
             left_neighbour = self.text.find_word_by_id(pronoun.field('index') - 2)
 
         right_neighbour = self.text.find_word_by_id(pronoun.field('index') + 1)
-        if right_neighbour.field('punct text') != '_':
+        if right_neighbour is not None and right_neighbour.field('punct text') != '_':
             right_neighbour = self.text.find_word_by_id(pronoun.field('index') + 2)
 
         try:
