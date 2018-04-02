@@ -1,18 +1,22 @@
 # -*- coding: utf-8 -*-
-
+import xgboost as xgb
 
 #TODO: implement correct analysis of imput sequence shift. Special attention to punctuation marks
 
 import subprocess
 import json
 from gensim.models import KeyedVectors
-from nltk.stem.snowball import SnowballStemmer
 from pymystem3 import Mystem
 from nltk.tokenize import *
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import normalize
+from sklearn.preprocessing import StandardScaler
 # from sklearn import linear_model
 from math import log
 
 from sklearn import linear_model
+import pickle
+import os
 import numpy as np
 
 
@@ -64,7 +68,6 @@ pronoun_feature_list["них"] = "Case=AccGenLoc|Number=Plur"
 pronoun_feature_list["ими"] = "Animacy=Anim|Case=Ins|Number=Plur"
 pronoun_feature_list["ними"] = "Animacy=Anim|Case=Ins|Number=Plur"
 
-
 class AbstractWord:
     def __init__(self):
         pass
@@ -83,7 +86,7 @@ class Word(AbstractWord):
         self.sh = sh
         self.field_dict = word_dict
         self.parsed_features = self.__parse_features__(self.field_dict['morph features'])
-        self.predicted = False      #for pronouns only
+        self.antecedent_sh = -1      #for pronouns only
 
     def field(self, field):
         return self.field_dict[field]
@@ -226,7 +229,7 @@ class TextBuilder:
         print("first line is", line)
 
         sentences.append(self.read_sentence(line))
-        while len(sentences) < 10:
+        while len(sentences) < 7:
             tmp = self.read_sentence()
             if tmp is not None:
                 sentences.append(tmp)
@@ -352,8 +355,12 @@ class Resolver:
 
         self.length = 10
 
-        self.classifier = linear_model.LogisticRegression(solver='liblinear')
+        # self.classifier = linear_model.LogisticRegression(solver='liblinear')
 
+        self.classifier = RandomForestClassifier()
+        # self.classifier = xgb.XGBClassifier()
+
+        self.scaler = StandardScaler()
 
         # purity = 52.2%
 
@@ -404,11 +411,11 @@ class Resolver:
         good_candidates = [c for c in candidates if c.sh > answer_sh and c.sh < pronoun.sh]
         examples_set = []
         for gc in good_candidates:
-            features = self.build_features_list(gc, pronoun)
+            features = self.build_features(gc, pronoun)
             examples_set.append((features, 0))
 
         answer = [c for c in candidates if c.sh == answer_sh][0]
-        answer_features = self.build_features_list(answer, pronoun)
+        answer_features = self.build_features(answer, pronoun)
         examples_set.append((answer_features, 1))
 
         return examples_set
@@ -418,6 +425,13 @@ class Resolver:
 
         all_features_array = []
         all_answers_array = []
+
+        if os.path.exists("classifier"):
+            print("loading from file")
+            with open("classifier", 'rb') as f:
+                # str = pickle.load(f)
+                self.classifier = pickle.load(f)
+            return
 
 
 
@@ -436,23 +450,35 @@ class Resolver:
                         continue
 
                     for ex in examples:
-                        all_features_array.append(ex[0])
+                        all_features_array.append(ex[0].reshape(-1,1))
                         all_answers_array.append(ex[1])
 
                 self.text_builder.forward()
                 self.text = self.text_builder.get_text()
             print("prons in text: ", prons)
 
-        with open("training_data.json", 'w') as f:
-            json.dump(all_features_array, f)
-            json.dump(all_answers_array, f)
+        # with open("training_data.json", 'w') as f:
+        #     json.dump(all_features_array, f)
+        #     json.dump(all_answers_array, f)
 
             print("data dumped")
 
-
         print(len(all_features_array), len(all_answers_array), prons)
+        print(np.array(all_features_array).shape, np.array(all_answers_array).shape)
 
-        self.classifier.fit(np.array(all_features_array), np.array(all_answers_array))
+        param = {'max_depth':3, 'eta':1, 'silent':1, 'objective':'binary:logistic' }
+        num_round = 2
+
+        # tmp = self.scaler.fit_transform(np.array(all_features_array).reshape(len(all_features_array), len(all_features_array[0])))
+        tmp = np.array(all_features_array).reshape(len(all_features_array), len(all_features_array[0]))
+
+        self.classifier.fit(normalize(tmp), np.array(all_answers_array))
+
+        print("did fit", self.classifier.feature_importances_)
+
+        with open("classifier", 'wb') as f:
+            s = pickle.dump(self.classifier, f)
+            # pickle.dump(s, f)
 
         # new_binary_set = classifier.predict(np.array(all_features_array))
         # print self.classifier.score(np.array(all_features_array), np.array(self.binary_set))
@@ -461,14 +487,9 @@ class Resolver:
         self.pred_list = []
         for sentence in self.text.get_sent_list():
             for word in sentence.get_word_list():
-                if word.field('text').lower() in pronoun_text_list and not word.predicted:
+                if word.field('text').lower() in pronoun_text_list and word.antecedent_sh < 0:
                     self.pred_list.append(word)
 
-
-    def predict_word_proba(self, candidate, pronoun):
-        features = self.build_features_list(candidate, pronoun)
-        prob = self.classifier.predict(features)
-        return prob
 
     def predict_proba(self, doc_id):
 
@@ -480,10 +501,12 @@ class Resolver:
         self.text = self.text_builder.get_text()
 
         i = 0.0
+        j = 0.0
         self.not_founders = 0
         while len(self.text.get_sent_list()) > 0:
             self.build_prediction_list()
             for pronoun in self.pred_list:
+                j += 1
                 res = self.predict_pronoun_proba(doc_id, pronoun)
                 try:
                     answer_sh = self.answer_dict[doc_id][pronoun.sh]
@@ -491,13 +514,20 @@ class Resolver:
                     print ("not found pronoun at", pronoun.sh, "at answer dict of doc", doc_id)
                     continue
 
-                if res is None:
+                if res is None or answer_sh is None:
                     continue
 
                 if answer_sh == res:
                     i += 1.0
                 else:
-                    print("wrong! ", res, "instead of", answer_sh)
+                    rw = self.text.find_word(res)
+                    aw = self.text.find_word(answer_sh)
+                    if rw is None:
+                        print("wrong! ", res, "not found in text!", "instead of", answer_sh, aw.field("text"))
+                    elif aw is None:
+                        print("wrong! ", res, rw.field("text"), "instead of", answer_sh, "not found in text")
+                    else:
+                        print("wrong! ", res, rw.field("text"), "instead of", answer_sh, aw.field("text"))
 
                 # cand_list = self.build_candidates_list(pronoun.sh)
                 # if cand_list is None:
@@ -520,61 +550,39 @@ class Resolver:
             #     print(s.index)
             # print ("after_up_end\n")
 
+        print("per cent = ", i/j)
         return (i, len(self.answer_list))
 
 
     def predict_pronoun_proba(self, text_id, pronoun):
         cand_list = self.build_candidates_list(pronoun)
 
-        print("pronoun is ", pronoun.field('text'))
+        # print("pronoun is ", pronoun.field('text'))
 
-        if cand_list is None:
+        if cand_list is None or len(cand_list) == 0:
             print ("no candidates for pronoun ", pronoun.field("text"), "at ", pronoun.sh)
             return None
 
         reverse_probas = dict()
         for candidate in cand_list:
-            feats = self.build_features_list(candidate, pronoun)
-            res = self.classifier.predict_proba(np.array(feats).reshape(1, -1))
-            print("candidate", candidate.field("text"), candidate.sh, res)
+            # feats = self.scaler.transform(self.build_features(candidate, pronoun))
+            feats = normalize(self.build_features(candidate, pronoun))
+
+
+            # dtest = xgb.DMatrix(feats)
+            # res = self.classifier.predict_proba(feats)
+            res = self.classifier.predict_proba(feats)
+
+            print("candidate", candidate.field("text"), candidate.sh, res, feats)
             reverse_probas[res[0][1]] = candidate
 
         antecedent = reverse_probas[max(reverse_probas.keys())]
 
         print("pronoun ", pronoun.field('text'), "at ", pronoun.sh, "refers to ", antecedent.field('text'), "at ", antecedent.sh)
 
-        pronoun.predicted = True
+        pronoun.antecedent_sh = antecedent.sh
 
         return antecedent.sh
-
-
-
-
-    #
-    # def predict(self):
-    #     i = 0.0
-    #     self.not_founders = 0
-    #     while len(self.text.get_sent_list()) > 0:
-    #         self.build_prediction_list()
-    #         for pronoun in self.pred_list:
-    #             tmp = self.build_candidates_list(pronoun.sh)
-    #             if tmp is None:
-    #                 continue
-    #             wd = self.get_right_word(pronoun)
-    #             print(pronoun.field('text'), pronoun.sh, "refers to", tmp.field('text'), tmp.sh)
-    #             if len(self.answer_dict) > 0 and pronoun.sh in self.answer_dict[self.file_id]:
-    #                 if self.answer_dict[file_id][pronoun.sh] == tmp.sh:
-    #                     i += 1.0
-    #                 else:
-    #                     print("wrong! ", tmp.sh, "instead of", self.answer_dict[self.file_id][pronoun.sh])
-    #         self.text_builder.forward()
-    #         self.text = self.text_builder.get_text()
-    #
-    #         # for s in self.text.get_sent_list():
-    #         #     print(s.index)
-    #         # print ("after_up_end\n")
-    #
-    #     return (i, len(self.answer_list))
 
     def build_candidates_list(self, pronoun, length = 10):
         sent_num = pronoun.field('sentence')
@@ -608,14 +616,14 @@ class Resolver:
 
         self.features = {}
         for candidate in candidates:
-            self.features[candidate] = self.build_features_list(candidate, pronoun)
+            self.features[candidate] = self.build_features(candidate, pronoun)
 
         antecedent = self.get_right_word(pronoun)
         self.associations[pronoun] = antecedent
 
-        pronoun.field('string')[9] = "refto_" + str(antecedent.sh + 1)
+        pronoun.field('string')[9] = "refto_" + str(antecedent.sh)
 
-        pronoun.predicted = True
+        pronoun.antecedent_sh = antecedent.sh
 
         self.features = dict()
 
@@ -688,23 +696,40 @@ class Resolver:
         except KeyError:
             print("key error at get frequency", self.been_candidate)
 
+
+    def build_features(self, candidate, pronoun):
+        res = []
+        if candidate.field("postag") == 'PRON':
+            res =  self.build_pronoun_features(candidate, pronoun)
+        else:
+            res =  self.build_features_list(candidate, pronoun)
+        # print("len", len(res))
+        npres = np.array(res).reshape(1,-1)
+        return normalize(npres)
+        # return npres
+
     def build_features_list(self, candidate, pronoun):
+
+        # if candidate.field("postag") == 'PRON':
+        #     return self.build_pronoun_features(candidate, pronoun)
 
         pronoun_info = [i for i in self.pronoun_list if i.get_text() == pronoun.field('text')][0]
         features_list = []
 
+        # features[0]
         # distance between candidate and pronoun. Might be negative, if candidate is further then the pronoun
-        delta = 0
-        if candidate.field('index') in self.associations.keys():
-            tmp = self.associations[candidate.field('index')]
-            delta = pronoun.field('index') - tmp.field('index')
-        else:
-            delta = pronoun.field('index') - candidate.field('index')
+        # delta = 0
+        # if candidate.field('index') in self.associations.keys():
+        #     tmp = self.associations[candidate.field('index')]
+        #     delta = 1/(pronoun.field('index') - tmp.field('index'))
+        # else:
 
+        delta = pronoun.field('index') - candidate.field('index')
         if delta < 0:
-            delta = - delta * 3
+            delta = 10000
         features_list.append(delta)
 
+        # features[1]
         #number of sentences between candidate and pronoun. Also might be negative
         sent_delta = 0
         if candidate.field('sentence') in self.associations.keys():
@@ -717,6 +742,7 @@ class Resolver:
             sent_delta = - sent_delta * 3
         features_list.append(sent_delta)
 
+        # features[2]
         #feature connected with candidates position in a sentence
         pos_feature = 0
         if candidate.field('deprel') == 'nsubj' or candidate.field('postag') == 'nsubjpass':
@@ -729,6 +755,7 @@ class Resolver:
         # :TODO frequency feature might be implemented
         # :TODO add word2vec feature if there will be any time left
 
+        # features[3]
         # feature connected with the case of pronoun and it's antecedent
         # It's written like "in" here, because each pronoun may have several  variants of case
         case_feature = 0
@@ -737,14 +764,20 @@ class Resolver:
                 case_feature = 1
         features_list.append(case_feature)
 
+
+        # features[4]
         #feature connected with animacy of candidate
         animacy_feature = 0
-        if pronoun.get_feature('Animacy') is not None and candidate.get_feature('Animacy') is not None:
-            if candidate.get_feature('Animacy') in pronoun_info.get_feature('Animacy'):
-                animacy_feature = 1
+        if pronoun_info.get_feature('Animacy') is not None and candidate.get_feature('Animacy') is not None:
+            try:
+                if candidate.get_feature('Animacy') in pronoun_info.get_feature('Animacy'):
+                    animacy_feature = 1
+            except:
+                pass
         features_list.append(animacy_feature)
 
 
+        # features[5]
         #simple parallelism feature
         synt_parallel_feature = 0
         if candidate.field("deprel") == pronoun.field("deprel"):
@@ -764,11 +797,13 @@ class Resolver:
                     synt_parallel_feature = 6
         features_list.append(synt_parallel_feature)
 
+        # features[6]
         #Frequency feature
         frequency_feature = self.get_word_frequency(self.mystem.lemmatize(candidate.field('text'))[0])
         # frequency_feature = self.text.get_word_frequency(self.stemmer.stem(candidate.field('text').decode('utf8')).encode('utf8'))
         features_list.append(frequency_feature)
 
+        # features[7]
         #Using Word2Vec
         similarity_feature = 0
         left_neighbour = self.text.find_word_by_id(pronoun.field('index') - 1)
@@ -797,9 +832,15 @@ class Resolver:
 
         features_list.append(similarity_feature)
 
+        # features[8
         tmp = [i for i in self.associations.keys() if self.associations[i].field('index') == candidate.field('index')]
         coreference_feature = len(tmp)
         features_list.append(coreference_feature)
+
+
+        # features[9]
+        # appending zero feature only for noun candidates. It is set to one for pronouns
+        features_list.append(0)
 
         # gender_feature = 0
         # if candidate.get_feature('Gender') and pronoun_info.get_feature('Gender') is not None:
@@ -810,15 +851,16 @@ class Resolver:
 
         # print len(features_list)
 
+
         return features_list
 
     def is_word_acceptable(self, pron, candidate):
 
         condition_list = []
 
-        # leave nouns only
+        # leave nouns and pronouns
 
-        if candidate.field('postag') != 'NOUN':
+        if candidate.field('postag') not in  ['NOUN', 'PRON']:
             return False
 
         # print(pron.field('text'))
@@ -864,10 +906,54 @@ class Resolver:
                 return False
         return True
 
-    def output_results(self, file):
-        for sentence in self.text.get_sent_list():
-            for word in sentence.get_word_list():
-                file.write(reduce((lambda x, y: x + " " + y), word.field('string')) + '\n')
+    # def output_results(self, file):
+    #     for sentence in self.text.get_sent_list():
+    #         for word in sentence.get_word_list():
+    #             file.write(reduce((lambda x, y: x + " " + y), word.field('string')) + '\n')
+
+
+    def build_pronoun_features(self, candidate, pronoun):
+        pronoun_info = [i for i in self.pronoun_list if i.get_text() == pronoun.field('text')][0]
+        features_list = []
+        if (pronoun.antecedent_sh > 0):
+            # case where antecedent might be a pronoun, which had been processed previousle (coreference)
+            # then we get the features from original NP with some changes
+            print("possible coreference ", pronoun.field("text"), pronoun.sh, "with", candidate.field("text"), candidate.sh)
+            prev_cand = self.text.find_word(pronoun.antecedent_sh)
+            if prev_cand is not None:
+                features_list = self.build_features_list(prev_cand, pronoun)
+
+            if candidate.field('index') in self.associations.keys():
+                tmp = self.associations[candidate.field('index')]
+                delta = pronoun.field('index') - tmp.field('index')
+            else:
+                delta = pronoun.field('index') - candidate.field('index')
+
+            if delta < 0:
+                delta = - delta * 3
+            features_list[0] = delta
+
+            #number of sentences between candidate and pronoun. Also might be negative
+            sent_delta = 0
+            if candidate.field('sentence') in self.associations.keys():
+                tmp = self.associations[candidate.field('sentence')]
+                sent_delta = pronoun.field('sentence') - tmp.field('sentence')
+            else:
+                sent_delta = pronoun.field('sentence') - candidate.field('sentence')
+
+            if sent_delta < 0:
+                sent_delta = - sent_delta * 3
+            features_list[1] = sent_delta
+        else:
+            candidate.parsed_features = pronoun_info.parsed_features
+            features_list = self.build_features_list(candidate, pronoun)
+            features_list[-1] = 1
+
+        return features_list
+
+
+
+
 
 
 #:TODO distribute the code to different files
@@ -1006,7 +1092,7 @@ class file_parser:
 
         tokens = [i.split()[3] for i in token_file if int(i.split()[0]) == doc_id]
 
-        print("len = ", len(tokens))
+        # print("len = ", len(tokens))
 
         tmp_line = " ".join(tokens)
         tmp_line = tmp_line.replace('.', '.\n')
@@ -1049,7 +1135,7 @@ paths = sample.doc_paths
 
 pronoun_list = [PronounInfo(i, pronoun_feature_list[i]) for i in pronoun_text_list]
 
-fit_paths = list(paths.items())[:10]
+fit_paths = list(paths.items())[:50]
 
 
 
@@ -1057,6 +1143,8 @@ fit_paths = list(paths.items())[:10]
 cls = Resolver(paths, 1, pronoun_list)
 # # # #
 cls.answer_dict = sample.answers
+
+# print(sample.answers)
 
 cls.fit(fit_paths)
 # print(cls.answer_dict)
