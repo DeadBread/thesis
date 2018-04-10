@@ -9,7 +9,7 @@ from gensim.models import KeyedVectors
 from pymystem3 import Mystem
 from nltk.tokenize import *
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import normalize
+from sklearn.preprocessing import Normalizer
 from sklearn.preprocessing import StandardScaler
 # from sklearn import linear_model
 from math import log
@@ -67,6 +67,53 @@ pronoun_feature_list["них"] = "Case=AccGenLoc|Number=Plur"
 # pronoun_feature_list["ним"] = "Case=Dat|Number=Plur"
 pronoun_feature_list["ими"] = "Animacy=Anim|Case=Ins|Number=Plur"
 pronoun_feature_list["ними"] = "Animacy=Anim|Case=Ins|Number=Plur"
+
+#TODO: put it into a new class called "features"
+def decorate_features(feats):
+
+    features_names =\
+        "delta(id) \
+        delta(sent) \
+        deprel(pos_feature) \
+        case \
+        animacy \
+        parallelism \
+        frequency \
+        word2vec \
+        possible \
+        coreference(assitiations_num) \
+        is_pronoun".split()
+    return list(zip(feats, features_names))
+
+
+std = None
+mean = None
+if os.path.exists("stdmean"):
+    with open("stdmean", 'rt') as f:
+        std, mean = json.load(f)
+        std = np.array(std)
+        mean = np.array(mean)
+def normalize(matrix):
+    global std
+    global mean
+    if std is None and mean is None:
+        std = np.std(matrix, axis=0)
+        # print(std.reshape(1,2))
+        mean = np.mean(matrix, axis=0)
+
+    std_m = np.repeat(std.reshape(1, std.shape[0]), matrix.shape[0], 0)
+    mean_m = np.repeat(mean.reshape(1, std.shape[0]), matrix.shape[0], 0)
+
+    tmp = matrix - mean_m
+
+    # print("stdm" ,decorate_features(list(std)))
+
+    if not os.path.exists("stdmean"):
+        with open("stdmean", 'wt') as f:
+            json.dump((std.tolist(), mean.tolist()), f)
+
+    return tmp / std_m
+
 
 class AbstractWord:
     def __init__(self):
@@ -217,9 +264,9 @@ class TextBuilder:
                 # returning to the beginning of tokens file if tokens of newly opened file are above current position
                 self.tokens_file.seek(0)
 
+            line = self.tokens_file.readline()
+            while (int(line.split()[0]) != doc_id):
                 line = self.tokens_file.readline()
-                while (int(line.split()[0]) != doc_id):
-                    line = self.tokens_file.readline()
                     # print(line.split())
 
         self.doc_id = doc_id
@@ -353,6 +400,7 @@ class Resolver:
         self.answer_list = []
         self.answer_dict = dict()
 
+
         self.length = 10
 
         # self.classifier = linear_model.LogisticRegression(solver='liblinear')
@@ -360,7 +408,7 @@ class Resolver:
         self.classifier = RandomForestClassifier()
         # self.classifier = xgb.XGBClassifier()
 
-        self.scaler = StandardScaler()
+        self.scaler = Normalizer()
 
         # purity = 52.2%
 
@@ -406,6 +454,7 @@ class Resolver:
         if len([c for c in candidates if c.sh == answer_sh]) == 0:
             cand_info = [(i.field('text'), i.sh) for i in candidates]
             print ("for pronoun ", pronoun.field('text'), " at ", pronoun.sh, " found no answer in candidates list: ", cand_info)
+            pronoun.antecedent_sh = 0
             return None
 
         good_candidates = [c for c in candidates if c.sh > answer_sh and c.sh < pronoun.sh]
@@ -429,8 +478,11 @@ class Resolver:
         if os.path.exists("classifier"):
             print("loading from file")
             with open("classifier", 'rb') as f:
-                # str = pickle.load(f)
                 self.classifier = pickle.load(f)
+
+            with open("scaler", 'rb') as f:
+                self.scaler = pickle.load(f)
+
             return
 
 
@@ -469,15 +521,24 @@ class Resolver:
         param = {'max_depth':3, 'eta':1, 'silent':1, 'objective':'binary:logistic' }
         num_round = 2
 
-        # tmp = self.scaler.fit_transform(np.array(all_features_array).reshape(len(all_features_array), len(all_features_array[0])))
-        tmp = np.array(all_features_array).reshape(len(all_features_array), len(all_features_array[0]))
+        # tmp = self.scaler.fit_transform(np.array(all_features_array).reshape(len(all_features_array[0]), len(all_features_array)))
+        # tmp = tmp.reshape(len(all_features_array), len(all_features_array[0]))
+        # tmp = np.array(all_features_array).reshape(len(all_features_array), len(all_features_array[0]))
 
-        self.classifier.fit(normalize(tmp), np.array(all_answers_array))
+        tmp = np.array(all_features_array).reshape(len(all_features_array), len(all_features_array[0]))
+        print(tmp.shape, tmp[:10])
+
+        tmp = normalize(tmp)
+
+        self.classifier.fit(tmp, np.array(all_answers_array))
 
         print("did fit", self.classifier.feature_importances_)
 
         with open("classifier", 'wb') as f:
-            s = pickle.dump(self.classifier, f)
+            pickle.dump(self.classifier, f)
+
+        with open("scaler", 'wb') as f:
+            pickle.dump(self.scaler, f)
             # pickle.dump(s, f)
 
         # new_binary_set = classifier.predict(np.array(all_features_array))
@@ -492,6 +553,8 @@ class Resolver:
 
 
     def predict_proba(self, doc_id):
+
+        print("classifier", decorate_features(self.classifier.feature_importances_))
 
         path = self.paths[doc_id]
 
@@ -551,7 +614,7 @@ class Resolver:
             # print ("after_up_end\n")
 
         print("per cent = ", i/j)
-        return (i, len(self.answer_list))
+        return (i/j, len(self.answer_list))
 
 
     def predict_pronoun_proba(self, text_id, pronoun):
@@ -565,20 +628,24 @@ class Resolver:
 
         reverse_probas = dict()
         for candidate in cand_list:
-            # feats = self.scaler.transform(self.build_features(candidate, pronoun))
-            feats = normalize(self.build_features(candidate, pronoun))
+            feats = self.build_features(candidate, pronoun)
+            # nfeats = self.scaler.transform(feats)
+
+            nfeats = normalize(feats)
+
+            # nfeats = normalize(feats)
 
 
             # dtest = xgb.DMatrix(feats)
             # res = self.classifier.predict_proba(feats)
-            res = self.classifier.predict_proba(feats)
+            res = self.classifier.predict_proba(nfeats)
 
-            print("candidate", candidate.field("text"), candidate.sh, res, feats)
+            print("candidate", candidate.field("text"), candidate.sh, res, '\n', decorate_features(feats.tolist()[0]), decorate_features(nfeats.tolist()[0]), '\n')
             reverse_probas[res[0][1]] = candidate
 
         antecedent = reverse_probas[max(reverse_probas.keys())]
 
-        print("pronoun ", pronoun.field('text'), "at ", pronoun.sh, "refers to ", antecedent.field('text'), "at ", antecedent.sh)
+        print("pronoun ", pronoun.field('text'), "at ", pronoun.sh, "refers to ", antecedent.field('text'), "at ", antecedent.sh, '\n\n')
 
         pronoun.antecedent_sh = antecedent.sh
 
@@ -705,25 +772,16 @@ class Resolver:
             res =  self.build_features_list(candidate, pronoun)
         # print("len", len(res))
         npres = np.array(res).reshape(1,-1)
-        return normalize(npres)
-        # return npres
+        # return normalize(npres)
+        return npres
 
     def build_features_list(self, candidate, pronoun):
-
-        # if candidate.field("postag") == 'PRON':
-        #     return self.build_pronoun_features(candidate, pronoun)
 
         pronoun_info = [i for i in self.pronoun_list if i.get_text() == pronoun.field('text')][0]
         features_list = []
 
         # features[0]
         # distance between candidate and pronoun. Might be negative, if candidate is further then the pronoun
-        # delta = 0
-        # if candidate.field('index') in self.associations.keys():
-        #     tmp = self.associations[candidate.field('index')]
-        #     delta = 1/(pronoun.field('index') - tmp.field('index'))
-        # else:
-
         delta = pronoun.field('index') - candidate.field('index')
         if delta < 0:
             delta = 10000
@@ -732,14 +790,15 @@ class Resolver:
         # features[1]
         #number of sentences between candidate and pronoun. Also might be negative
         sent_delta = 0
-        if candidate.field('sentence') in self.associations.keys():
-            tmp = self.associations[candidate.field('sentence')]
-            sent_delta = pronoun.field('sentence') - tmp.field('sentence')
-        else:
-            sent_delta = pronoun.field('sentence') - candidate.field('sentence')
+        # if candidate.field('sentence') in self.associations.keys():
+        #     tmp = self.associations[candidate.field('sentence')]
+        #     sent_delta = pronoun.field('sentence') - tmp.field('sentence')
+        # else:
+
+        sent_delta = pronoun.field('sentence') - candidate.field('sentence')
 
         if sent_delta < 0:
-            sent_delta = - sent_delta * 3
+            sent_delta = 100
         features_list.append(sent_delta)
 
         # features[2]
@@ -785,8 +844,8 @@ class Resolver:
             # print("look for pronoun", pronoun.field('text'), pronoun.field('index') , "in sentence", pronoun.field('sentence') )
             try:
                 head_pron = self.text.get_sentence(pronoun.field('sentence')).find_in_sentence(pronoun.field('head'))
-            except AttributeError:
-                print("pronoun number", pronoun.field('sentence'))
+            except AttributeError as err:
+                print("pronoun number", pronoun.field('sentence'), err.args)
                 for i in [a.index for a in self.text.get_sent_list()]:
                     print("sentences:", i)
 
@@ -799,43 +858,43 @@ class Resolver:
 
         # features[6]
         #Frequency feature
-        frequency_feature = self.get_word_frequency(self.mystem.lemmatize(candidate.field('text'))[0])
-        # frequency_feature = self.text.get_word_frequency(self.stemmer.stem(candidate.field('text').decode('utf8')).encode('utf8'))
+        # frequency_feature = word.been_ante
+        frequency_feature = self.get_word_frequency(self.mystem.lemmatize(candidate.field("text"))[0])
         features_list.append(frequency_feature)
 
-        # features[7]
-        #Using Word2Vec
-        similarity_feature = 0
-        left_neighbour = self.text.find_word_by_id(pronoun.field('index') - 1)
+        # # features[7]
+        # #Using Word2Vec
+        # similarity_feature = 0
+        # left_neighbour = self.text.find_word_by_id(pronoun.field('index') - 1)
+        #
+        # if left_neighbour is not None and left_neighbour.field('punct text') != '_':
+        #     left_neighbour = self.text.find_word_by_id(pronoun.field('index') - 2)
+        #
+        # right_neighbour = self.text.find_word_by_id(pronoun.field('index') + 1)
+        # if right_neighbour is not None and right_neighbour.field('punct text') != '_':
+        #     right_neighbour = self.text.find_word_by_id(pronoun.field('index') + 2)
+        #
+        # try:
+        #     left_neighbour_lemma = self.mystem.lemmatize(left_neighbour.field('text'))[0]
+        #     right_neighbour_lemma = self.mystem.lemmatize(right_neighbour.field('text'))[0]
+        #
+        #     candidate_lemma = self.mystem.lemmatize(candidate.field('text'))[0]
+        #
+        #     if left_neighbour_lemma is not None:
+        #         similarity_feature += self.model.similarity(candidate_lemma.decode('utf8'),
+        #                                                     left_neighbour_lemma.decode('utf8'))
+        #     if right_neighbour_lemma is not None:
+        #         similarity_feature += self.model.similarity(candidate_lemma.decode('utf8'),
+        #                                                     right_neighbour_lemma.decode('utf8'))
+        # except:
+        #     pass
+        #
+        # features_list.append(similarity_feature)
 
-        if left_neighbour is not None and left_neighbour.field('punct text') != '_':
-            left_neighbour = self.text.find_word_by_id(pronoun.field('index') - 2)
-
-        right_neighbour = self.text.find_word_by_id(pronoun.field('index') + 1)
-        if right_neighbour is not None and right_neighbour.field('punct text') != '_':
-            right_neighbour = self.text.find_word_by_id(pronoun.field('index') + 2)
-
-        try:
-            left_neighbour_lemma = self.mystem.lemmatize(left_neighbour.field('text'))[0]
-            right_neighbour_lemma = self.mystem.lemmatize(right_neighbour.field('text'))[0]
-
-            candidate_lemma = self.mystem.lemmatize(candidate.field('text'))[0]
-
-            if left_neighbour_lemma is not None:
-                similarity_feature += self.model.similarity(candidate_lemma.decode('utf8'),
-                                                            left_neighbour_lemma.decode('utf8'))
-            if right_neighbour_lemma is not None:
-                similarity_feature += self.model.similarity(candidate_lemma.decode('utf8'),
-                                                            right_neighbour_lemma.decode('utf8'))
-        except:
-            pass
-
-        features_list.append(similarity_feature)
-
-        # features[8
-        tmp = [i for i in self.associations.keys() if self.associations[i].field('index') == candidate.field('index')]
-        coreference_feature = len(tmp)
-        features_list.append(coreference_feature)
+        # # features[8
+        # tmp = [i for i in self.associations.keys() if self.associations[i].field('index') == candidate.field('index')]
+        # coreference_feature = len(tmp)
+        # features_list.append(coreference_feature)
 
 
         # features[9]
@@ -857,6 +916,9 @@ class Resolver:
     def is_word_acceptable(self, pron, candidate):
 
         condition_list = []
+
+        if candidate.sh > pron.sh:
+            return False
 
         # leave nouns and pronouns
 
@@ -1149,7 +1211,12 @@ cls.answer_dict = sample.answers
 cls.fit(fit_paths)
 # print(cls.answer_dict)
 # # #
-cls.predict_proba(1)
+v1 = cls.predict_proba(1)
+v2 = cls.predict_proba(2)
+v3 = cls.predict_proba(3)
+#
+# print(v2[0])
+print(v1[0], v2[0], v3[0])
 
 
 
