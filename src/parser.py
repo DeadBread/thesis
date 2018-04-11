@@ -320,6 +320,9 @@ class TextBuilder:
                 tokens_line = self.tokens_file.readline()
                 tok_spl = tokens_line.split()
 
+            if (len(spl) < 2):
+                print("too short", spl, tok_spl)
+
             tmp_word = dict()
             tmp_word['string'] = spl
             tmp_word['index'] = self.word_id
@@ -335,7 +338,8 @@ class TextBuilder:
             self.word_sh = int(tok_spl[1])
 
             if tok_spl[3].lower() != tmp_word['text']:
-                print("mismatch! ", self.word_sh, tmp_word['text'], tok_spl[3].lower(), "doc", tok_spl[0])
+                print("mismatch! ", self.word_sh, '"', tmp_word['text'], '"', tmp_word['string'], tok_spl[3].lower(), "doc", tok_spl[0])
+                return None
 
             new_word = Word(tmp_word, self.word_sh)
 
@@ -555,6 +559,11 @@ class Resolver:
     def predict_proba(self, doc_id):
 
         print("classifier", decorate_features(self.classifier.feature_importances_))
+
+        global mean
+        global  std
+
+        print("scaler", mean, std)
 
         path = self.paths[doc_id]
 
@@ -800,6 +809,13 @@ class Resolver:
         if sent_delta < 0:
             sent_delta = 100
         features_list.append(sent_delta)
+
+
+        sh_delta = pronoun.sh - candidate.sh
+        if (sh_delta < 0):
+            print("stang, sh_delta < 0", sh_delta)
+            sh_delta = 1000000
+        features_list.append(sh_delta)
 
         # features[2]
         #feature connected with candidates position in a sentence
@@ -1197,7 +1213,7 @@ paths = sample.doc_paths
 
 pronoun_list = [PronounInfo(i, pronoun_feature_list[i]) for i in pronoun_text_list]
 
-fit_paths = list(paths.items())[:50]
+fit_paths = list(paths.items())[:200]
 
 
 
@@ -1214,15 +1230,21 @@ cls.fit(fit_paths)
 v1 = cls.predict_proba(1)
 v2 = cls.predict_proba(2)
 v3 = cls.predict_proba(3)
+# v4 = cls.predict_proba(4)
+v5 = cls.predict_proba(5)
+v6 = cls.predict_proba(6)
+v7 = cls.predict_proba(7)
 #
 # print(v2[0])
-print(v1[0], v2[0], v3[0])
+print(v1[0], v2[0], v3[0], v5[0], v6[0], v7[0])
 
 
 
 # print(paths[-1])
 # #
 # fp = file_parser('/home/gand/death/Diploma/corpus/rucoref_texts/', '../corpus/Tokens.txt')
+#
+# fp.parse_all_files(paths)
 # #
 # fp.prepare_file(1)
 # fp.parse_file('tmp', paths[0] + '_parsed')
@@ -1238,7 +1260,7 @@ print(v1[0], v2[0], v3[0])
 # # # print(list(sample.doc_paths.keys())[:10])
 # #
 # # # #
-# cls = Resolver("../corpus/rucoref_texts/" + sample.doc_paths[1] + '_parsed', pronoun_list)
+# cls = Resolver("../corpus/rucoref_texts/" + sample.doc_paths[1] + '_parsed', 1, pronoun_list)
 # # # #
 # cls.answer_dict = sample.answers
 # print(cls.answer_dict)
