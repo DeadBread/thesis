@@ -9,6 +9,7 @@ from gensim.models import KeyedVectors
 from pymystem3 import Mystem
 from nltk.tokenize import *
 from sklearn.ensemble import RandomForestClassifier
+import math
 # from sklearn.preprocessing import Normalizer
 from sklearn.preprocessing import StandardScaler
 # from sklearn import linear_model
@@ -75,14 +76,13 @@ def decorate_features(feats):
     features_names =\
         "delta(id) \
         delta(sent) \
+        delta(sh) \
         deprel(pos_feature) \
         case \
         animacy \
         parallelism \
         frequency \
-        word2vec \
-        possible \
-        coreference(assitiations_num) \
+        possible coreference(assitiations_num) \
         is_pronoun".split()
     return list(zip(feats, features_names))
 
@@ -412,7 +412,7 @@ class Resolver:
 
         # self.classifier = linear_model.LogisticRegression(solver='liblinear')
 
-        self.classifier = RandomForestClassifier()
+        self.classifier = RandomForestClassifier(max_depth= 4, n_estimators= 20, class_weight = {0:2, 1:8})
         # self.classifier = xgb.XGBClassifier()
 
         # self.scaler = MyNormalizer()
@@ -661,6 +661,8 @@ class Resolver:
 
         pronoun.antecedent_sh = antecedent.sh
 
+        self.associations[pronoun] = antecedent
+
         return antecedent.sh
 
     def build_candidates_list(self, pronoun, length = 10):
@@ -712,20 +714,20 @@ class Resolver:
     def get_right_word(self, pronoun):
         score_list = []
         for candidate in self.features.keys():
-            if candidate.field('index') in self.associations.values():    #coreference!
-                tmp_distances = []
-                tmp_s_distances = []
-                tmp = [i for i in self.associations.keys() if self.associations[i] == candidate]
-                for pron2 in tmp:
-                    if self.is_there_coreference(pronoun, pron2):
-                        return candidate
-                    tmp_distances.append(pronoun.field('index') - pron2.field('index'))
-                    tmp_s_distances.append(pronoun.field('sentence index') - pron2.field('sentence index'))
-
-                new_distance = min(tmp_distances)
-                new_s_distance = min(tmp_s_distances)
-                self.features[candidate][0] = new_distance
-                self.features[candidate][1] = new_s_distance
+            # if candidate.field('index') in self.associations.values():    #coreference!
+            #     tmp_distances = []
+            #     tmp_s_distances = []
+            #     tmp = [i for i in self.associations.keys() if self.associations[i] == candidate]
+            #     for pron2 in tmp:
+            #         if self.is_there_coreference(pronoun, pron2):
+            #             return candidate
+            #         tmp_distances.append(pronoun.field('index') - pron2.field('index'))
+            #         tmp_s_distances.append(pronoun.field('sentence index') - pron2.field('sentence index'))
+            #
+            #     new_distance = min(tmp_distances)
+            #     new_s_distance = min(tmp_s_distances)
+            #     self.features[candidate][0] = new_distance
+            #     self.features[candidate][1] = new_s_distance
 
             tmp_features = [a * b for (a, b) in zip(self.features[candidate], self.coefficients)]
 
@@ -907,7 +909,10 @@ class Resolver:
 
         # # features[8
         # tmp = [i for i in self.associations.keys() if self.associations[i].field('index') == candidate.field('index')]
-        # coreference_feature = len(tmp)
+        # coreference_feature = len(tmp) * 1000
+        # if coreference_feature > 1000 or math.isnan(coreference_feature):
+        #     print("core feat", coreference_feature)
+        #     exit(1)
         # features_list.append(coreference_feature)
 
 
@@ -1212,18 +1217,26 @@ paths = sample.doc_paths
 
 pronoun_list = [PronounInfo(i, pronoun_feature_list[i]) for i in pronoun_text_list]
 
-fit_paths = list(paths.items())[:200]
+
+# cls = Resolver(sample.doc_paths, 1, pronoun_list)
+# cls.evaluate(sample.answers)
+
+
+
+
+
+fit_paths = list(paths.items())[85:]
 
 
 
 
 cls = Resolver(paths, 1, pronoun_list)
-# # # #
+# # # # #
 cls.answer_dict = sample.answers
 
 # # print(sample.answers)
 #
-# cls.fit(fit_paths)
+cls.fit(fit_paths)
 # # print(cls.answer_dict)
 # # # #
 #
@@ -1238,7 +1251,8 @@ cls.answer_dict = sample.answers
 #
 # print("final", sum/n)
 
-
+print(cls.predict_proba(3))
+print(cls.predict_proba(5))
 #
 # print(v2[0])
 # print(v1[0], v2[0], v3[0], v5[0], v6[0], v7[0])
@@ -1255,8 +1269,7 @@ cls.answer_dict = sample.answers
 # fp.parse_file('tmp', paths[0] + '_parsed')
 #
 
-cls = Resolver(sample.doc_paths, 1, pronoun_list)
-cls.evaluate(sample.answers)
+
 
 
 
