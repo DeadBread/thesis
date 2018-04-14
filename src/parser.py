@@ -801,11 +801,6 @@ class Resolver:
 
         # features[1]
         #number of sentences between candidate and pronoun. Also might be negative
-        sent_delta = 0
-        # if candidate.field('sentence') in self.associations.keys():
-        #     tmp = self.associations[candidate.field('sentence')]
-        #     sent_delta = pronoun.field('sentence') - tmp.field('sentence')
-        # else:
 
         sent_delta = pronoun.field('sentence') - candidate.field('sentence')
 
@@ -814,11 +809,11 @@ class Resolver:
         features_list.append(sent_delta)
 
 
-        # sh_delta = pronoun.sh - candidate.sh
-        # if (sh_delta < 0):
-        #     print("stang, sh_delta < 0", sh_delta)
-        #     sh_delta = 1000000
-        # features_list.append(sh_delta)
+        sh_delta = pronoun.sh - candidate.sh
+        if (sh_delta < 0):
+            print("stang, sh_delta < 0", sh_delta)
+            sh_delta = 1000000
+        features_list.append(sh_delta)
 
         # features[2]
         #feature connected with candidates position in a sentence
@@ -1226,22 +1221,22 @@ cls = Resolver(paths, 1, pronoun_list)
 # # # #
 cls.answer_dict = sample.answers
 
-# print(sample.answers)
-
-cls.fit(fit_paths)
-# print(cls.answer_dict)
-# # #
-
-n = 85
-tmp = []
-sum = 0
-for path in list(paths.keys())[:n]:
-    tmp.append(cls.predict_proba(path)[0])
-    sum += tmp[-1]
-
-print(tmp)
-
-print("final", sum/n)
+# # print(sample.answers)
+#
+# cls.fit(fit_paths)
+# # print(cls.answer_dict)
+# # # #
+#
+# n = 85
+# tmp = []
+# sum = 0
+# for path in list(paths.keys())[:n]:
+#     tmp.append(cls.predict_proba(path)[0])
+#     sum += tmp[-1]
+#
+# print(tmp)
+#
+# print("final", sum/n)
 
 
 #
