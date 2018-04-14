@@ -9,7 +9,7 @@ from gensim.models import KeyedVectors
 from pymystem3 import Mystem
 from nltk.tokenize import *
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import Normalizer
+# from sklearn.preprocessing import Normalizer
 from sklearn.preprocessing import StandardScaler
 # from sklearn import linear_model
 from math import log
@@ -68,6 +68,7 @@ pronoun_feature_list["них"] = "Case=AccGenLoc|Number=Plur"
 pronoun_feature_list["ими"] = "Animacy=Anim|Case=Ins|Number=Plur"
 pronoun_feature_list["ними"] = "Animacy=Anim|Case=Ins|Number=Plur"
 
+
 #TODO: put it into a new class called "features"
 def decorate_features(feats):
 
@@ -86,33 +87,32 @@ def decorate_features(feats):
     return list(zip(feats, features_names))
 
 
-std = None
-mean = None
-if os.path.exists("stdmean"):
-    with open("stdmean", 'rt') as f:
-        std, mean = json.load(f)
-        std = np.array(std)
-        mean = np.array(mean)
-def normalize(matrix):
-    global std
-    global mean
-    if std is None and mean is None:
-        std = np.std(matrix, axis=0)
-        # print(std.reshape(1,2))
-        mean = np.mean(matrix, axis=0)
 
-    std_m = np.repeat(std.reshape(1, std.shape[0]), matrix.shape[0], 0)
-    mean_m = np.repeat(mean.reshape(1, std.shape[0]), matrix.shape[0], 0)
+class MyNormalizer(object):
+    def __init__(self):
+        self.std = None
+        self.mean = None
+        if os.path.exists("stdmean"):
+            with open("stdmean", 'rt') as f:
+                std, mean = json.load(f)
+                self.std = np.array(std)
+                self.mean = np.array(mean)
+    def normalize(self, matrix):
+        if self.std is None and self.mean is None:
+            self.std = np.std(matrix, axis=0)
+            # print(std.reshape(1,2))
+            self.mean = np.mean(matrix, axis=0)
 
-    tmp = matrix - mean_m
+        std_m = np.repeat(self.std.reshape(1, self.std.shape[0]), matrix.shape[0], 0)
+        mean_m = np.repeat(self.mean.reshape(1, self.std.shape[0]), matrix.shape[0], 0)
 
-    # print("stdm" ,decorate_features(list(std)))
+        tmp = matrix - mean_m
 
-    if not os.path.exists("stdmean"):
-        with open("stdmean", 'wt') as f:
-            json.dump((std.tolist(), mean.tolist()), f)
+        if not os.path.exists("stdmean"):
+            with open("stdmean", 'wt') as f:
+                json.dump((self.std.tolist(), self.mean.tolist()), f)
 
-    return tmp / std_m
+        return tmp / std_m
 
 
 class AbstractWord:
@@ -412,7 +412,7 @@ class Resolver:
         self.classifier = RandomForestClassifier()
         # self.classifier = xgb.XGBClassifier()
 
-        self.scaler = Normalizer()
+        self.scaler = MyNormalizer()
 
         # purity = 52.2%
 
@@ -484,8 +484,8 @@ class Resolver:
             with open("classifier", 'rb') as f:
                 self.classifier = pickle.load(f)
 
-            with open("scaler", 'rb') as f:
-                self.scaler = pickle.load(f)
+            # with open("scaler", 'rb') as f:
+            #     self.scaler = pickle.load(f)
 
             return
 
@@ -532,7 +532,7 @@ class Resolver:
         tmp = np.array(all_features_array).reshape(len(all_features_array), len(all_features_array[0]))
         print(tmp.shape, tmp[:10])
 
-        tmp = normalize(tmp)
+        tmp = self.scaler.normalize(tmp)
 
         self.classifier.fit(tmp, np.array(all_answers_array))
 
@@ -563,7 +563,7 @@ class Resolver:
         global mean
         global  std
 
-        print("scaler", mean, std)
+        print("scaler", self.scaler.mean, self.scaler.std)
 
         path = self.paths[doc_id]
 
@@ -640,7 +640,7 @@ class Resolver:
             feats = self.build_features(candidate, pronoun)
             # nfeats = self.scaler.transform(feats)
 
-            nfeats = normalize(feats)
+            nfeats = self.scaler.normalize(feats)
 
             # nfeats = normalize(feats)
 
@@ -649,7 +649,7 @@ class Resolver:
             # res = self.classifier.predict_proba(feats)
             res = self.classifier.predict_proba(nfeats)
 
-            print("candidate", candidate.field("text"), candidate.sh, res, '\n', decorate_features(feats.tolist()[0]), decorate_features(nfeats.tolist()[0]), '\n')
+            print("candidate", candidate.field("text"), candidate.sh, res, '\n', decorate_features(nfeats.tolist()[0]), '\n')
             reverse_probas[res[0][1]] = candidate
 
         antecedent = reverse_probas[max(reverse_probas.keys())]
@@ -811,11 +811,11 @@ class Resolver:
         features_list.append(sent_delta)
 
 
-        sh_delta = pronoun.sh - candidate.sh
-        if (sh_delta < 0):
-            print("stang, sh_delta < 0", sh_delta)
-            sh_delta = 1000000
-        features_list.append(sh_delta)
+        # sh_delta = pronoun.sh - candidate.sh
+        # if (sh_delta < 0):
+        #     print("stang, sh_delta < 0", sh_delta)
+        #     sh_delta = 1000000
+        # features_list.append(sh_delta)
 
         # features[2]
         #feature connected with candidates position in a sentence
@@ -1213,7 +1213,7 @@ paths = sample.doc_paths
 
 pronoun_list = [PronounInfo(i, pronoun_feature_list[i]) for i in pronoun_text_list]
 
-fit_paths = list(paths.items())[:200]
+fit_paths = list(paths.items())[85:]
 
 
 
@@ -1227,16 +1227,18 @@ cls.answer_dict = sample.answers
 cls.fit(fit_paths)
 # print(cls.answer_dict)
 # # #
-v1 = cls.predict_proba(1)
-v2 = cls.predict_proba(2)
-v3 = cls.predict_proba(3)
-# v4 = cls.predict_proba(4)
-v5 = cls.predict_proba(5)
-v6 = cls.predict_proba(6)
-v7 = cls.predict_proba(7)
+
+
+sum = 0
+for path in list(paths.keys())[:85]:
+    sum += cls.predict_proba(path)[0]
+
+print("final", sum/85)
+
+
 #
 # print(v2[0])
-print(v1[0], v2[0], v3[0], v5[0], v6[0], v7[0])
+# print(v1[0], v2[0], v3[0], v5[0], v6[0], v7[0])
 
 
 
