@@ -88,31 +88,34 @@ def decorate_features(feats):
 
 
 
-class MyNormalizer(object):
-    def __init__(self):
-        self.std = None
-        self.mean = None
-        if os.path.exists("stdmean"):
-            with open("stdmean", 'rt') as f:
-                std, mean = json.load(f)
-                self.std = np.array(std)
-                self.mean = np.array(mean)
-    def normalize(self, matrix):
-        if self.std is None and self.mean is None:
-            self.std = np.std(matrix, axis=0)
-            # print(std.reshape(1,2))
-            self.mean = np.mean(matrix, axis=0)
+# class MyNormalizer(object):
+#     def __init__(self):
+std = None
+mean = None
+if os.path.exists("stdmean"):
+    with open("stdmean", 'rt') as f:
+        std, mean = json.load(f)
+        std = np.array(std)
+        mean = np.array(mean)
 
-        std_m = np.repeat(self.std.reshape(1, self.std.shape[0]), matrix.shape[0], 0)
-        mean_m = np.repeat(self.mean.reshape(1, self.std.shape[0]), matrix.shape[0], 0)
+def normalize( matrix):
+    global std
+    global mean
+    if std is None and mean is None:
+        std = np.std(matrix, axis=0)
+        # print(std.reshape(1,2))
+        mean = np.mean(matrix, axis=0)
 
-        tmp = matrix - mean_m
+    std_m = np.repeat(std.reshape(1, std.shape[0]), matrix.shape[0], 0)
+    mean_m = np.repeat(mean.reshape(1, std.shape[0]), matrix.shape[0], 0)
 
-        if not os.path.exists("stdmean"):
-            with open("stdmean", 'wt') as f:
-                json.dump((self.std.tolist(), self.mean.tolist()), f)
+    tmp = matrix - mean_m
 
-        return tmp / std_m
+    if not os.path.exists("stdmean"):
+        with open("stdmean", 'wt') as f:
+            json.dump((std.tolist(), mean.tolist()), f)
+
+    return tmp / std_m
 
 
 class AbstractWord:
@@ -412,7 +415,7 @@ class Resolver:
         self.classifier = RandomForestClassifier()
         # self.classifier = xgb.XGBClassifier()
 
-        self.scaler = MyNormalizer()
+        # self.scaler = MyNormalizer()
 
         # purity = 52.2%
 
@@ -489,11 +492,9 @@ class Resolver:
 
             return
 
-
-
+        prons = 0
         for doc_id, path in fit_paths:
             print("document ", doc_id)
-            prons = 0
             self.text_builder.init_with_file(path, doc_id)
             self.text = self.text_builder.get_text()
             while len(self.text.get_sent_list()) > 0:
@@ -529,10 +530,11 @@ class Resolver:
         # tmp = tmp.reshape(len(all_features_array), len(all_features_array[0]))
         # tmp = np.array(all_features_array).reshape(len(all_features_array), len(all_features_array[0]))
 
-        tmp = np.array(all_features_array).reshape(len(all_features_array), len(all_features_array[0]))
-        print(tmp.shape, tmp[:10])
+        tmp_ar = np.array(all_features_array).reshape(len(all_features_array), len(all_features_array[0]))
+        # print(tmp.shape, tmp[:10])
 
-        tmp = self.scaler.normalize(tmp)
+        tmp = normalize(tmp_ar)
+        # tmp = self.scaler.normalize(tmp)
 
         self.classifier.fit(tmp, np.array(all_answers_array))
 
@@ -541,8 +543,8 @@ class Resolver:
         with open("classifier", 'wb') as f:
             pickle.dump(self.classifier, f)
 
-        with open("scaler", 'wb') as f:
-            pickle.dump(self.scaler, f)
+        # with open("scaler", 'wb') as f:
+        #     pickle.dump(self.scaler, f)
             # pickle.dump(s, f)
 
         # new_binary_set = classifier.predict(np.array(all_features_array))
@@ -556,6 +558,25 @@ class Resolver:
                     self.pred_list.append(word)
 
 
+    def evaluate(self, answers):
+        n = 85
+        fit_paths = list(self.paths.items())[n:]
+
+        # # # #
+        cls.answer_dict = answers
+
+        cls.fit(fit_paths)
+
+        tmp = []
+        sum = 0
+        for path in list(paths.keys())[:n]:
+            tmp.append(cls.predict_proba(path)[0])
+            sum += tmp[-1]
+
+        print(tmp)
+
+        return("final", sum / n)
+
     def predict_proba(self, doc_id):
 
         print("classifier", decorate_features(self.classifier.feature_importances_))
@@ -563,7 +584,7 @@ class Resolver:
         global mean
         global  std
 
-        print("scaler", self.scaler.mean, self.scaler.std)
+        print("scaler", mean, std)
 
         path = self.paths[doc_id]
 
@@ -601,26 +622,8 @@ class Resolver:
                     else:
                         print("wrong! ", res, rw.field("text"), "instead of", answer_sh, aw.field("text"))
 
-                # cand_list = self.build_candidates_list(pronoun.sh)
-                # if cand_list is None:
-                #     continue
-                #
-                # probas = dict()
-                # for candidate in cand_list:
-
-
-                # print(pronoun.field('text'), pronoun.sh, "refers to", tmp.field('text'), tmp.sh)
-                # if len(self.answer_dict) > 0 and pronoun.sh in self.answer_dict[self.file_id]:
-                #     if self.answer_dict[file_id][pronoun.sh] == tmp.sh:
-                #         i += 1.0
-                #     else:
-                #         print("wrong! ", tmp.sh, "instead of", self.answer_dict[self.file_id][pronoun.sh])
             self.text_builder.forward()
             self.text = self.text_builder.get_text()
-
-            # for s in self.text.get_sent_list():
-            #     print(s.index)
-            # print ("after_up_end\n")
 
         print("per cent = ", i/j)
         return (i/j, len(self.answer_list))
@@ -640,9 +643,9 @@ class Resolver:
             feats = self.build_features(candidate, pronoun)
             # nfeats = self.scaler.transform(feats)
 
-            nfeats = self.scaler.normalize(feats)
+            # nfeats = self.scaler.normalize(feats)
 
-            # nfeats = normalize(feats)
+            nfeats = normalize(feats)
 
 
             # dtest = xgb.DMatrix(feats)
@@ -913,15 +916,15 @@ class Resolver:
         # features_list.append(coreference_feature)
 
 
+        gender_feature = 0
+        if candidate.get_feature('Gender') and pronoun_info.get_feature('Gender') is not None:
+            if candidate.get_feature('Gender') in pronoun_info.get_feature('Gender'):
+                gender_feature = 1
+        features_list.append(gender_feature)
+
         # features[9]
         # appending zero feature only for noun candidates. It is set to one for pronouns
         features_list.append(0)
-
-        # gender_feature = 0
-        # if candidate.get_feature('Gender') and pronoun_info.get_feature('Gender') is not None:
-        #     if features_list.append(candidate.get_feature('Gender') in pronoun_info.get_feature('Gender')):
-        #         gender_feature = 1
-        # features_list.append(gender_feature)
 
 
         # print len(features_list)
@@ -1008,7 +1011,7 @@ class Resolver:
                 delta = pronoun.field('index') - candidate.field('index')
 
             if delta < 0:
-                delta = - delta * 3
+                delta = 100000
             features_list[0] = delta
 
             #number of sentences between candidate and pronoun. Also might be negative
@@ -1020,8 +1023,9 @@ class Resolver:
                 sent_delta = pronoun.field('sentence') - candidate.field('sentence')
 
             if sent_delta < 0:
-                sent_delta = - sent_delta * 3
+                sent_delta = 10000
             features_list[1] = sent_delta
+            features_list[-1] = 1
         else:
             candidate.parsed_features = pronoun_info.parsed_features
             features_list = self.build_features_list(candidate, pronoun)
@@ -1213,7 +1217,7 @@ paths = sample.doc_paths
 
 pronoun_list = [PronounInfo(i, pronoun_feature_list[i]) for i in pronoun_text_list]
 
-fit_paths = list(paths.items())[85:]
+fit_paths = list(paths.items())[:200]
 
 
 
@@ -1228,12 +1232,16 @@ cls.fit(fit_paths)
 # print(cls.answer_dict)
 # # #
 
-
+n = 85
+tmp = []
 sum = 0
-for path in list(paths.keys())[:85]:
-    sum += cls.predict_proba(path)[0]
+for path in list(paths.keys())[:n]:
+    tmp.append(cls.predict_proba(path)[0])
+    sum += tmp[-1]
 
-print("final", sum/85)
+print(tmp)
+
+print("final", sum/n)
 
 
 #
@@ -1252,7 +1260,8 @@ print("final", sum/85)
 # fp.parse_file('tmp', paths[0] + '_parsed')
 #
 
-
+cls = Resolver(sample.doc_paths, 1, pronoun_list)
+cls.evaluate(sample.answers)
 
 
 
