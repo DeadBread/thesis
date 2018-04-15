@@ -417,12 +417,11 @@ class Resolver:
         self.answer_list = []
         self.answer_dict = dict()
 
-
         self.length = 10
 
         # self.classifier = linear_model.LogisticRegression(solver='liblinear')
 
-        self.classifier = RandomForestClassifier(max_depth= 4, n_estimators= 20, class_weight = {0:2, 1:8})
+        self.classifier = RandomForestClassifier(max_depth= 4, n_estimators= 25, class_weight = {0:1.5, 1:8.5})
         # self.classifier = xgb.XGBClassifier()
 
         # self.scaler = MyNormalizer()
