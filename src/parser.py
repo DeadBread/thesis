@@ -115,6 +115,9 @@ def normalize( matrix):
         with open("stdmean", 'wt') as f:
             json.dump((std.tolist(), mean.tolist()), f)
 
+    print("std = ", std)
+    print("mean = ", mean)
+
     return tmp / std_m
 
 
@@ -468,9 +471,13 @@ class Resolver:
         examples_set = []
         for gc in good_candidates:
             features = self.build_features(gc, pronoun)
+            print("reco feat", features[0], features[0][8])
             examples_set.append((features, 0))
 
         answer = [c for c in candidates if c.sh == answer_sh][0]
+
+        self.associations[pronoun] = answer
+
         answer_features = self.build_features(answer, pronoun)
         examples_set.append((answer_features, 1))
 
@@ -507,6 +514,7 @@ class Resolver:
                         continue
 
                     for ex in examples:
+                        # print("feature = ", ex[0][0][8])
                         all_features_array.append(ex[0].reshape(-1,1))
                         all_answers_array.append(ex[1])
 
@@ -907,12 +915,12 @@ class Resolver:
         #
         # features_list.append(similarity_feature)
 
-        # # features[8
-        # tmp = [i for i in self.associations.keys() if self.associations[i].field('index') == candidate.field('index')]
-        # coreference_feature = len(tmp) * 1000
-        # if coreference_feature > 1000 or math.isnan(coreference_feature):
+        # features[8
+        # tmp = [i for i in self.associations.keys() if self.associations[i].field('text') == candidate.field('text')]
+        # coreference_feature = len(tmp) * 100
+        # if coreference_feature > 0:
         #     print("core feat", coreference_feature)
-        #     exit(1)
+        # #     exit(1)
         # features_list.append(coreference_feature)
 
 
@@ -927,7 +935,7 @@ class Resolver:
         features_list.append(0)
 
 
-        # print len(features_list)
+        print(features_list)
 
 
         return features_list
@@ -1005,7 +1013,7 @@ class Resolver:
                 features_list = self.build_features_list(prev_cand, pronoun)
 
             if candidate.field('index') in self.associations.keys():
-                tmp = self.associations[candidate.field('index')]
+                tmp = self.associations[candidate]
                 delta = pronoun.field('index') - tmp.field('index')
             else:
                 delta = pronoun.field('index') - candidate.field('index')
@@ -1017,7 +1025,7 @@ class Resolver:
             #number of sentences between candidate and pronoun. Also might be negative
             sent_delta = 0
             if candidate.field('sentence') in self.associations.keys():
-                tmp = self.associations[candidate.field('sentence')]
+                tmp = self.associations[candidate]
                 sent_delta = pronoun.field('sentence') - tmp.field('sentence')
             else:
                 sent_delta = pronoun.field('sentence') - candidate.field('sentence')
@@ -1218,8 +1226,8 @@ paths = sample.doc_paths
 pronoun_list = [PronounInfo(i, pronoun_feature_list[i]) for i in pronoun_text_list]
 
 
-# cls = Resolver(sample.doc_paths, 1, pronoun_list)
-# cls.evaluate(sample.answers)
+cls = Resolver(sample.doc_paths, 1, pronoun_list)
+cls.evaluate(sample.answers)
 
 
 
@@ -1229,14 +1237,14 @@ fit_paths = list(paths.items())[85:]
 
 
 
-
-cls = Resolver(paths, 1, pronoun_list)
-# # # # #
-cls.answer_dict = sample.answers
+#
+# cls = Resolver(paths, 1, pronoun_list)
+# # # # # #
+# cls.answer_dict = sample.answers
 
 # # print(sample.answers)
 #
-cls.fit(fit_paths)
+# cls.fit(fit_paths)
 # # print(cls.answer_dict)
 # # # #
 #
@@ -1251,8 +1259,8 @@ cls.fit(fit_paths)
 #
 # print("final", sum/n)
 
-print(cls.predict_proba(3))
-print(cls.predict_proba(5))
+# print(cls.predict_proba(3))
+# print(cls.predict_proba(5))
 #
 # print(v2[0])
 # print(v1[0], v2[0], v3[0], v5[0], v6[0], v7[0])
