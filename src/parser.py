@@ -70,6 +70,13 @@ pronoun_feature_list["ими"] = "Animacy=Anim|Case=Ins|Number=Plur"
 pronoun_feature_list["ними"] = "Animacy=Anim|Case=Ins|Number=Plur"
 
 
+pronoun_groups = []
+pronoun_groups.append(pronoun_text_list[:9])
+pronoun_groups.append(pronoun_text_list[9:18])
+pronoun_groups.append(pronoun_text_list[19:])
+pronoun_groups.append([pronoun_text_list[18]] + pronoun_text_list[1:9])
+
+
 #TODO: put it into a new class called "features"
 def decorate_features(feats):
 
@@ -954,6 +961,14 @@ class Resolver:
 
         # print(pron.field('text'))
         pronoun_info = [i for i in self.pronoun_list if i.get_text() == pron.field('text')][0]
+
+
+        if candidate.field('postag') == 'PRON':
+            tmp = [i for i in pronoun_groups if candidate.field('text') in i and pron.field('text') in i]
+            if len(tmp) == 0:
+                print ("bad pronoun ", candidate.field('text'), pron.field('text'))
+                return False
+
         # if not len(pronoun_info_tmp):
         #     print("not found in pronoun list", pron.field("string"))
         #     return False
