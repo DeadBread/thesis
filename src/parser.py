@@ -9,6 +9,8 @@ from gensim.models import KeyedVectors
 from pymystem3 import Mystem
 from nltk.tokenize import *
 from sklearn.ensemble import RandomForestClassifier
+
+from sklearn.svm import SVC
 import math
 # from sklearn import linear_model
 from math import log
@@ -91,7 +93,7 @@ def decorate_features(feats):
         animacy \
         parallelism \
         frequency \
-        possible coreference(assitiations_num) \
+        possible_coreference(assitiations_num) \
         number_of_pronoun \
         is_pronoun".split()
     return list(zip(feats, features_names))
@@ -124,7 +126,6 @@ def normalize( matrix):
     if not os.path.exists("stdmean"):
         with open("stdmean", 'wt') as f:
             json.dump((std.tolist(), mean.tolist()), f)
-
     # print("std = ", std)
     # print("mean = ", mean)
 
@@ -285,8 +286,6 @@ class TextBuilder:
 
         sentences = []
 
-        print("first line is", line)
-
         sentences.append(self.read_sentence(line))
         while len(sentences) < 7:
             tmp = self.read_sentence()
@@ -420,21 +419,26 @@ class Resolver:
 
         # self.classifier = linear_model.LogisticRegression(solver='liblinear')
 
-        self.classifier = RandomForestClassifier(max_features=5, max_depth= 7, n_estimators= 40, class_weight = {0:1, 1:9})
+        # self.classifier = RandomForestClassifier(max_features=5, max_depth= 7, n_estimators= 40, class_weight = {0:1, 1:9})
         # self.classifier = xgb.XGBClassifier(7, 0.05, 500)
 
+        self.classifier = RandomForestClassifier(n_estimators=6)
+
+        # self.classifier = SVC(C=0.5, gamma=1/5., class_weight = {0:4 , 1:6}, probability=True)
+        # self.classifier = xgb.XGBClassifier()
 
 
-
-        self.model = Sequential()
-        self.model.add(Dense(units=50, activation='relu', input_dim=11))
-        self.model.add(Dense(units=50, activation='relu'))
+        # self.model = Sequential()
+        # self.model.add(Dense(units=50, activation='relu', input_dim=11))
+        # self.model.add(Dense(units=50, activation='tanh'))
         # self.model.add(Dense(units=30, activation='relu'))
-        self.model.add(Dense(units=2, activation='softmax'))
-
-        opt = SGD(lr=0.05, momentum=0.0, nesterov=False)
-
-        self.model.compile(optimizer=opt, loss='mse')
+        # self.model.add(Dense(units=20, activation='tanh'))
+        # self.model.add(Dense(units=10, activation='relu'))
+        # self.model.add(Dense(units=2, activation='softmax'))
+        #
+        # # opt = SGD(lr=0.05, momentum=0.0, nesterov=False)
+        #
+        # self.model.compile(optimizer='sgd', loss='mse')
 
 
         # self.scaler = MyNormalizer()
@@ -469,6 +473,7 @@ class Resolver:
             pronoun.antecedent_sh = 0
             return None
 
+        # good_candidates = candidates
         good_candidates = [c for c in candidates if c.sh > answer_sh and c.sh < pronoun.sh]
 
         global summ
@@ -502,11 +507,12 @@ class Resolver:
             print("loading from file")
             with open("classifier", 'rb') as f:
                 self.classifier = pickle.load(f)
+                print(self.classifier.get_params())
 
             if os.path.exists("nn.h5"):
                 self.model = load_model('nn.h5')
 
-                return
+            return
 
         prons = 0
         for doc_id, path in fit_paths:
@@ -532,6 +538,9 @@ class Resolver:
                 self.text = self.text_builder.get_text()
             print("prons in text: ", prons)
 
+            self.associations = dict()
+            self.been_candidate = dict()
+
         # print(len(all_features_array), len(all_answers_array), prons)
         # print(np.array(all_features_array).shape, np.array(all_answers_array).shape)
 
@@ -541,14 +550,18 @@ class Resolver:
         tmp_ar = np.array(all_features_array).reshape(len(all_features_array), len(all_features_array[0]))
         # print(tmp.shape, tmp[:10])
 
-        tmp = normalize(tmp_ar)
+        # tmp = normalize(tmp_ar)
+
+        tmp = tmp_ar
         # tmp = self.scaler.normalize(tmp)
 
         self.classifier.fit(tmp, np.array(all_answers_array_cls))
 
+        print(self.classifier.get_params())
+
         l = len(all_features_array)
-        self.model.fit(tmp[:int(l * 0.8)], np.array(all_answers_array_nn[:int(l * 0.8)]), epochs=30, batch_size=10,
-                       class_weight=[2, 8], validation_data=(tmp[int(l * 0.8):], np.array(all_answers_array_nn[int(l * 0.8):])))
+        # self.model.fit(tmp[:int(l * 0.8)], np.array(all_answers_array_nn[:int(l * 0.8)]), epochs=30, batch_size=10,
+        #                class_weight=[1, 1], validation_data=(tmp[int(l * 0.8):], np.array(all_answers_array_nn[int(l * 0.8):])))
 
         # print("did fit", self.classifier.feature_importances_)
 
@@ -556,7 +569,7 @@ class Resolver:
             pickle.dump(self.classifier, f)
 
         # with open("nn.h5", 'wb') as f:
-        self.model.save("nn.h5")
+        # self.model.save("nn.h5")
 
         # with open("scaler", 'wb') as f:
         #     pickle.dump(self.scaler, f)
@@ -582,24 +595,37 @@ class Resolver:
 
         cls.fit(fit_paths)
 
+        # print(paths[list(paths.keys())[63]])
+
         tmp = []
         p_sum = 0
         r_sum = 0
-        for path in list(paths.keys())[10:11]:
+        # k_sum = 0
+        for path in list(paths.keys())[:n]:
+        # for path in [12]:
             res = cls.predict_proba(path)
-            r_sum += res[1]
+            #
+            # i_sum += res[0]
+            # j_sum += res[1]
+            # k_sum += res[2]
+            p_sum += res[0]
             tmp.append(res[0])
-            p_sum += tmp[-1]
+            r_sum += res[1]
+        #
+        print(list(zip(tmp, list(paths.keys())[:n])))
 
-        print(tmp)
+        precision = p_sum / n
+        recall = r_sum/n
+        f = 2 * precision * recall / (precision + recall)
 
-        f = 2 * p_sum * r_sum / (p_sum + r_sum) / n
+        print("final", precision, recall, f)
 
-        print("final", p_sum / n, r_sum / n, f)
 
     def predict_proba(self, doc_id):
 
         # print("classifier", decorate_features(self.classifier.feature_importances_))
+        self.been_candidate = dict()
+        self.associations = dict()
 
         global mean
         global  std
@@ -620,7 +646,7 @@ class Resolver:
         while len(self.text.get_sent_list()) > 0:
             self.build_prediction_list()
             for pronoun in self.pred_list:
-                k += 1
+                k += 1.0
                 res = self.predict_pronoun_proba(doc_id, pronoun)
                 try:
                     answer_sh = self.answer_dict[doc_id][pronoun.sh]
@@ -630,10 +656,9 @@ class Resolver:
 
                 if res is None or answer_sh is None:
                     continue
-
                 j += 1
 
-                if res == answer_sh:
+                if answer_sh == res:
                     i += 1.0
                 else:
                     rw = self.text.find_word(res)
@@ -648,14 +673,14 @@ class Resolver:
             self.text_builder.forward()
             self.text = self.text_builder.get_text()
 
-        print("per cent = ", i/j)
-        return (i/j, i/k)
 
+        print("i = {}, j = {}, k = {}".format(i,j,k))
+        return (i/j, i/ k)
 
     def predict_pronoun_proba(self, text_id, pronoun):
         cand_list = self.build_candidates_list(pronoun)
 
-        # print("pronoun is ", pronoun.field('text'))
+        print("pronoun is ", pronoun.field('text'), pronoun.sh)
 
         if cand_list is None or len(cand_list) == 0:
             print ("no candidates for pronoun ", pronoun.field("text"), "at ", pronoun.sh)
@@ -665,18 +690,26 @@ class Resolver:
         for candidate in cand_list:
             feats = self.build_features(candidate, pronoun)
 
-            nfeats = normalize(feats)
+            # nfeats = normalize(feats)
+            nfeats = feats
+            #
+            res1 = self.classifier.predict_proba(feats)
 
-            res1 = self.classifier.predict_proba(nfeats)
+            # res2 = self.model.predict(nfeats)
 
-            res2 = self.model.predict(nfeats)
+            # res = 1.0 * res1[0] + 0.0 * res2[0]
 
-            res = 1.0 * res1[0] + 0.0 * res2[0]
+            res = res1[0]
 
-            # print("candidate", candidate.field("text"), candidate.sh, res, '\n', decorate_features(nfeats.tolist()[0]), '\n')
+            print("candidate", candidate.field("text"), candidate.sh, '-', res, '\n', decorate_features(nfeats.tolist()[0]), '\n')
             # reverse_probas[res[0][1]] = candidate
 
-            reverse_probas[res[1]] = candidate
+# <<<<<<< HEAD
+            reverse_probas[res[1] / nfeats[0][0]] = candidate
+# =======
+#             # print("candidate", candidate.field("text"), candidate.sh, res, '\n', decorate_features(nfeats.tolist()[0]), '\n')
+#             reverse_probas[res[0][1]] = candidate
+# >>>>>>> 14e6dfd... new 43 per cent
 
         antecedent = reverse_probas[max(reverse_probas.keys())]
 
@@ -690,19 +723,23 @@ class Resolver:
 
     def build_candidates_list(self, pronoun, length = 10):
         # sent_num = pronoun.field('sentence')
-        area = self.text.get_sent_list()
+        area = []
+        txt = self.text.get_sent_list()
+        for sent in txt:
+            for word in sent.get_word_list():
+                if pronoun.field("index") - word.field("index") < 35:
+                    area.append(word)
 
         candidates = []
-        for sentence in area:
-            tmp = sentence.get_word_list()
-            for word in tmp:
-                if self.is_word_acceptable(pronoun, word):
-                    candidates.append(word)
-                    tmp_word = self.mystem.lemmatize(word.field('text').lower())[0]
-                    if tmp_word in self.been_candidate:
-                        self.been_candidate[tmp_word] += 1
-                    else:
-                        self.been_candidate[tmp_word] = 1
+
+        for word in area:
+            if self.is_word_acceptable(pronoun, word):
+                candidates.append(word)
+                tmp_word = self.mystem.lemmatize(word.field('text').lower())[0]
+                if tmp_word in self.been_candidate:
+                    self.been_candidate[tmp_word] += 1
+                else:
+                    self.been_candidate[tmp_word] = 1
         return candidates
 
     def predict(self, doc_id):
@@ -737,7 +774,7 @@ class Resolver:
 
         # print ("j and deb", j, deb)
         print("p, r, f", i / j, i / k)
-        return (i / j, i / k)
+        return (i, j, k)
 
     def predict_word(self, num_pron):
         pronoun = self.text.find_word(num_pron)
@@ -842,35 +879,41 @@ class Resolver:
         # features[0]
         # distance between candidate and pronoun. Might be negative, if candidate is further then the pronoun
         delta = pronoun.field('index') - candidate.field('index')
-        if delta < 0:
-            delta = 10000
+        # if delta < 0:
+        #     delta = 10000
+
+        delta **= 2
         features_list.append(delta)
 
         # features[1]
         #number of sentences between candidate and pronoun. Also might be negative
-
-        sent_delta = pronoun.field('sentence') - candidate.field('sentence')
-
-        if sent_delta < 0:
-            sent_delta = 100
-        features_list.append(sent_delta)
+        #
+        # sent_delta = pronoun.field('sentence') - candidate.field('sentence')
+        #
+        # if sent_delta < 0:
+        #     sent_delta = 100
+        # features_list.append(sent_delta)
 
 
         sh_delta = pronoun.sh - candidate.sh
-        if (sh_delta < 0):
-            print("stang, sh_delta < 0", sh_delta)
-            sh_delta = 1000000
+        # if (sh_delta < 0):
+        #     print("stang, sh_delta < 0", sh_delta)
+        #     sh_delta = 1000000
         features_list.append(sh_delta)
 
         # features[2]
         #feature connected with candidates position in a sentence
-        pos_feature = 0
-        if candidate.field('deprel') == 'nsubj' or candidate.field('postag') == 'nsubjpass':
-            pos_feature = 2
-        elif candidate.field('deprel') == 'dobj':
-            pos_feature = 1
+        pos_feature1 = 0
+        pos_feature2 = 0
 
-        features_list.append(pos_feature)
+        if candidate.field('deprel') == 'nsubj' or candidate.field('postag') == 'nsubjpass':
+            pos_feature1 = 1
+        elif candidate.field('deprel') == 'dobj':
+            pos_feature2 = 1
+
+        features_list.append(pos_feature1)
+        features_list.append(pos_feature2)
+
 
         # :TODO frequency feature might be implemented
         # :TODO add word2vec feature if there will be any time left
@@ -899,23 +942,29 @@ class Resolver:
 
         # features[5]
         #simple parallelism feature
-        synt_parallel_feature = 0
+        synt_parallel_feature1 = 0
+        synt_parallel_feature2 = 0
+        synt_parallel_feature3 = 0
         if candidate.field("deprel") == pronoun.field("deprel"):
-            synt_parallel_feature = 1
+            synt_parallel_feature1 = 1
             # print("look for pronoun", pronoun.field('text'), pronoun.field('index') , "in sentence", pronoun.field('sentence') )
             try:
                 head_pron = self.text.get_sentence(pronoun.field('sentence')).find_in_sentence(pronoun.field('head'))
+                head_candidate = self.text.get_sentence(candidate.field('sentence')).find_in_sentence(candidate.field('head'))
+                if head_pron.field('deprel') == 'ROOT':
+                    synt_parallel_feature2 = 1
+                if head_candidate is not None and head_pron is not None and head_candidate.field('deprel') == head_pron.field('deprel'):
+                    synt_parallel_feature3 = 1
             except AttributeError as err:
                 print("pronoun number", pronoun.field('sentence'), err.args)
                 for i in [a.index for a in self.text.get_sent_list()]:
                     print("sentences:", i)
 
-            head_candidate = self.text.get_sentence(candidate.field('sentence')).find_in_sentence(candidate.field('head'))
-            if head_candidate is not None and head_pron is not None and head_candidate.field('deprel') == head_pron.field('deprel'):
-                synt_parallel_feature = 3
-                if head_pron.field('deprel') == 'ROOT':
-                    synt_parallel_feature = 6
-        features_list.append(synt_parallel_feature)
+        features_list.append(synt_parallel_feature1)
+        features_list.append(synt_parallel_feature2)
+        features_list.append(synt_parallel_feature3)
+
+
 
         # features[6]
         #Frequency feature
@@ -975,8 +1024,9 @@ class Resolver:
         # appending zero feature only for noun candidates. It is set to one for pronouns
         features_list.append(0)
 
-
-        # print(features_list)
+        #
+        # print(candidate.field("text"))
+        # print(features_list, '\n')
 
 
         return features_list
@@ -1012,8 +1062,8 @@ class Resolver:
             condition_list.append(candidate.get_feature('Number') in pronoun_info.get_feature('Number'))
 
         # need to do something with that. In syntaxnet gender doesn't always work correctly
-        if candidate.get_feature('Gender')and pronoun_info.get_feature('Gender') is not None:
-            condition_list.append(candidate.get_feature('Gender') in pronoun_info.get_feature('Gender'))
+        # if candidate.get_feature('Gender')and pronoun_info.get_feature('Gender') is not None:
+        #     condition_list.append(candidate.get_feature('Gender') in pronoun_info.get_feature('Gender'))
 
         fnd_sentence = self.text.get_sentence(candidate.field('sentence'))
         if fnd_sentence is None:
@@ -1269,72 +1319,4 @@ pronoun_list = [PronounInfo(i, pronoun_feature_list[i]) for i in pronoun_text_li
 
 cls = Resolver(sample.doc_paths, 1, pronoun_list)
 cls.evaluate(sample.answers)
-
-# print(cls.classifier.feature_importances_)
-
-
-
-# print(sum, ans, sum/ans)
-
-# fit_paths = list(paths.items())[85:]
-
-
-
-#
-# cls = Resolver(paths, 1, pronoun_list)
-# # # # # #
-# cls.answer_dict = sample.answers
-
-# # print(sample.answers)
-#
-# cls.fit(fit_paths)
-# # print(cls.answer_dict)
-# # # #
-#
-# n = 85
-# tmp = []
-# sum = 0
-# for path in list(paths.keys())[:n]:
-#     tmp.append(cls.predict_proba(path)[0])
-#     sum += tmp[-1]
-#
-# print(tmp)
-#
-# print("final", sum/n)
-
-# print(cls.predict_proba(3))
-# print(cls.predict_proba(5))
-#
-# print(v2[0])
-# print(v1[0], v2[0], v3[0], v5[0], v6[0], v7[0])
-
-
-
-# print(paths[-1])
-# #
-# fp = file_parser('/home/gand/death/Diploma/corpus/rucoref_texts/', '../corpus/Tokens.txt')
-#
-# fp.parse_all_files(paths)
-# #
-# fp.prepare_file(1)
-# fp.parse_file('tmp', paths[0] + '_parsed')
-#
-
-
-
-
-
-
-# sample = TrainSampleData('../corpus/groups.xml')
-# # #
-# # # print(list(sample.doc_paths.keys())[:10])
-# #
-# # # #
-# cls = Resolver("../corpus/rucoref_texts/" + sample.doc_paths[1] + '_parsed', 1, pronoun_list)
-# # # #
-# cls.answer_dict = sample.answers
-# print(cls.answer_dict)
-# # #
-# cls.predict()
-
 
