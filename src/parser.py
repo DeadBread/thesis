@@ -422,7 +422,7 @@ class Resolver:
         # self.classifier = RandomForestClassifier(max_features=5, max_depth= 7, n_estimators= 40, class_weight = {0:1, 1:9})
         # self.classifier = xgb.XGBClassifier(7, 0.05, 500)
 
-        self.classifier = RandomForestClassifier(n_estimators=6)
+        self.classifier = RandomForestClassifier(max_features="log2", n_estimators=6)
 
         # self.classifier = SVC(C=0.5, gamma=1/5., class_weight = {0:4 , 1:6}, probability=True)
         # self.classifier = xgb.XGBClassifier()
@@ -473,7 +473,6 @@ class Resolver:
             pronoun.antecedent_sh = 0
             return None
 
-        # good_candidates = candidates
         good_candidates = [c for c in candidates if c.sh > answer_sh and c.sh < pronoun.sh]
 
         global summ
@@ -600,14 +599,10 @@ class Resolver:
         tmp = []
         p_sum = 0
         r_sum = 0
-        # k_sum = 0
         for path in list(paths.keys())[:n]:
         # for path in [12]:
             res = cls.predict_proba(path)
-            #
-            # i_sum += res[0]
-            # j_sum += res[1]
-            # k_sum += res[2]
+
             p_sum += res[0]
             tmp.append(res[0])
             r_sum += res[1]
@@ -972,49 +967,6 @@ class Resolver:
         frequency_feature = self.get_word_frequency(self.mystem.lemmatize(candidate.field("text"))[0])
         features_list.append(frequency_feature)
 
-        # # features[7]
-        # #Using Word2Vec
-        # similarity_feature = 0
-        # left_neighbour = self.text.find_word_by_id(pronoun.field('index') - 1)
-        #
-        # if left_neighbour is not None and left_neighbour.field('punct text') != '_':
-        #     left_neighbour = self.text.find_word_by_id(pronoun.field('index') - 2)
-        #
-        # right_neighbour = self.text.find_word_by_id(pronoun.field('index') + 1)
-        # if right_neighbour is not None and right_neighbour.field('punct text') != '_':
-        #     right_neighbour = self.text.find_word_by_id(pronoun.field('index') + 2)
-        #
-        # try:
-        #     left_neighbour_lemma = self.mystem.lemmatize(left_neighbour.field('text'))[0]
-        #     right_neighbour_lemma = self.mystem.lemmatize(right_neighbour.field('text'))[0]
-        #
-        #     candidate_lemma = self.mystem.lemmatize(candidate.field('text'))[0]
-        #
-        #     if left_neighbour_lemma is not None:
-        #         similarity_feature += self.model.similarity(candidate_lemma.decode('utf8'),
-        #                                                     left_neighbour_lemma.decode('utf8'))
-        #     if right_neighbour_lemma is not None:
-        #         similarity_feature += self.model.similarity(candidate_lemma.decode('utf8'),
-        #                                                     right_neighbour_lemma.decode('utf8'))
-        # except:
-        #     pass
-        #
-        # features_list.append(similarity_feature)
-
-        # features[8
-        # tmp = [i for i in self.associations.keys() if self.associations[i].field('text') == candidate.field('text')]
-        # coreference_feature = len(tmp) * 100
-        # if coreference_feature > 0:
-        #     print("core feat", coreference_feature)
-        # #     exit(1)
-        # features_list.append(coreference_feature)
-
-
-        gender_feature = 0
-        if candidate.get_feature('Gender') and pronoun_info.get_feature('Gender') is not None:
-            if candidate.get_feature('Gender') in pronoun_info.get_feature('Gender'):
-                gender_feature = 1
-        features_list.append(gender_feature)
 
 
         features_list.append(pronoun_text_list.index(pronoun.field('text')))
@@ -1053,17 +1005,13 @@ class Resolver:
                 # print ("bad pronoun ", candidate.field('text'), pron.field('text'))
                 return False
 
-        # if not len(pronoun_info_tmp):
-        #     print("not found in pronoun list", pron.field("string"))
-        #     return False
-
         # pronoun and antecedent should be the same number
         if candidate.get_feature('Number') and pronoun_info.get_feature('Number') is not None:
             condition_list.append(candidate.get_feature('Number') in pronoun_info.get_feature('Number'))
 
         # need to do something with that. In syntaxnet gender doesn't always work correctly
-        # if candidate.get_feature('Gender')and pronoun_info.get_feature('Gender') is not None:
-        #     condition_list.append(candidate.get_feature('Gender') in pronoun_info.get_feature('Gender'))
+        if candidate.get_feature('Gender')and pronoun_info.get_feature('Gender') is not None:
+            condition_list.append(candidate.get_feature('Gender') in pronoun_info.get_feature('Gender'))
 
         fnd_sentence = self.text.get_sentence(candidate.field('sentence'))
         if fnd_sentence is None:
@@ -1083,11 +1031,6 @@ class Resolver:
                 return False
         return True
 
-    # def output_results(self, file):
-    #     for sentence in self.text.get_sent_list():
-    #         for word in sentence.get_word_list():
-    #             file.write(reduce((lambda x, y: x + " " + y), word.field('string')) + '\n')
-
 
     def build_pronoun_features(self, candidate, pronoun):
         pronoun_info = [i for i in self.pronoun_list if i.get_text() == pronoun.field('text')][0]
@@ -1096,13 +1039,15 @@ class Resolver:
             # case where antecedent might be a pronoun, which had been processed previousle (coreference)
             # then we get the features from original NP with some changes
             # print("possible coreference ", pronoun.field("text"), pronoun.sh, "with", candidate.field("text"), candidate.sh)
-            prev_cand = self.text.find_word(pronoun.antecedent_sh)
+            prev_cand = self.associations[candidate]
             if prev_cand is not None:
                 features_list = self.build_features_list(prev_cand, pronoun)
+                # features_list = self.build_features_list(pronoun_info, pronoun)
 
             if candidate.field('index') in self.associations.keys():
                 tmp = self.associations[candidate]
-                delta = pronoun.field('index') - tmp.field('index')
+                # delta = pronoun.field('index') - tmp.field('index')
+                delta = pronoun.field('index') - candidate.field('index')
             else:
                 delta = pronoun.field('index') - candidate.field('index')
 
@@ -1114,7 +1059,8 @@ class Resolver:
             sent_delta = 0
             if candidate.field('sentence') in self.associations.keys():
                 tmp = self.associations[candidate]
-                sent_delta = pronoun.field('sentence') - tmp.field('sentence')
+                # sent_delta = pronoun.field('sentence') - tmp.field('sentence')
+                sent_delta = pronoun.field('sentence') - candidate.field('sentence')
             else:
                 sent_delta = pronoun.field('sentence') - candidate.field('sentence')
 
