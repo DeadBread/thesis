@@ -237,7 +237,7 @@ class Text:
 
 class TextBuilder:
 
-    def __init__(self, file_name, doc_id):
+    def __init__(self, file_name = None, doc_id = None):
 
         self.word_id = 0
         self.sent_id = 0
@@ -258,7 +258,8 @@ class TextBuilder:
         # for excessive reading of the first word of the next sentence
         self.__tmp_first_word = None
 
-        self.init_with_file(file_name, doc_id)
+        if file_name is not None:
+            self.init_with_file(file_name, doc_id)
 
         return
 
@@ -266,7 +267,11 @@ class TextBuilder:
 
         line = None
 
-        if decorate_file_name(file_name) != self.file_name:
+        if self.file is not None:
+            self.file.close()
+        self.file = open(file_name, 'rt')
+
+        if decorate_file_name(file_name) != self.file_name and doc_id is not None:
             self.__tmp_first_word = None
             if self.file is not None:
                 self.file.close()
@@ -299,7 +304,7 @@ class TextBuilder:
     def read_sentence(self, first_line = None):
 
         tmp_sent = []
-        if self.__tmp_first_word != None:
+        if self.__tmp_first_word is not None:
             tmp_sent.append(self.__tmp_first_word)
 
         tokens_line = first_line
@@ -317,17 +322,18 @@ class TextBuilder:
             if len(spl) < 1:
                 continue
 
-            if tokens_line is None:
+            if tokens_line is None and self.doc_id is not None:
                 tokens_line = self.tokens_file.readline()
 
             # tokens_line = self.tokens_file.readline()
 
-            tok_spl = tokens_line.split()
+            if tokens_line is not None:
+                tok_spl = tokens_line.split()
 
             # print(tok_spl)
 
             # if we already passed first word of new text and read corresponding token string - we should pass it
-            if self.__tmp_first_word is not None and tok_spl[1] == self.__tmp_first_word.sh:
+            if self.doc_id is not None and self.__tmp_first_word is not None and tok_spl[1] == self.__tmp_first_word.sh:
                 tokens_line = self.tokens_file.readline()
                 tok_spl = tokens_line.split()
 
@@ -346,11 +352,14 @@ class TextBuilder:
             tmp_word['deprel'] = spl[7]
             tmp_word['sentence'] = self.sent_id
 
-            self.word_sh = int(tok_spl[1])
+            if tokens_line is not None:
+                self.word_sh = int(tok_spl[1])
+            else:
+                self.word_sh += len(tmp_word['text']) + 1
 
-            if tok_spl[3].lower() != tmp_word['text']:
-                print("mismatch! ", self.word_sh, '"', tmp_word['text'], '"', tmp_word['string'], tok_spl[3].lower(), "doc", tok_spl[0])
-                return None
+            # if tok_spl[3].lower() != tmp_word['text']:
+            #     print("mismatch! ", self.word_sh, '"', tmp_word['text'], '"', tmp_word['string'], tok_spl[3].lower(), "doc", tok_spl[0])
+            #     return None
 
             new_word = Word(tmp_word, self.word_sh)
 
@@ -392,13 +401,13 @@ class Resolver:
 
     def __init__(self, paths, file_id, pronoun_list):
 
-        self.paths = paths
-        input_file_name = self.paths[file_id]
-
-        self.text_builder = TextBuilder(input_file_name, file_id)
-        self.file_id = file_id
-
-        self.text = self.text_builder.get_text()
+        # self.paths = paths
+        # input_file_name = self.paths[file_id]
+        #
+        self.text_builder = TextBuilder()
+        # self.file_id = file_id
+        #
+        # self.text = self.text_builder.get_text()
 
         self.resolved = dict()
         self.been_candidate = dict()
@@ -607,7 +616,7 @@ class Resolver:
             tmp.append(res[0])
             r_sum += res[1]
         #
-        print(list(zip(tmp, list(paths.keys())[:n])))
+        # print(list(zip(tmp, list(paths.keys())[:n])))
 
         precision = p_sum / n
         recall = r_sum/n
@@ -616,7 +625,7 @@ class Resolver:
         print("final", precision, recall, f)
 
 
-    def predict_proba(self, doc_id):
+    def predict_proba(self, doc_id, in_path = None):
 
         # print("classifier", decorate_features(self.classifier.feature_importances_))
         self.been_candidate = dict()
@@ -626,13 +635,19 @@ class Resolver:
         global  std
 
         # print("scaler", mean, std)
-
-        path = self.paths[doc_id]
+        if in_path != None:
+            path = in_path
+            doc_id = None
+        else:
+            path = self.paths[doc_id]
 
         # print(self.paths[doc_id])
 
         self.text_builder.init_with_file(path, doc_id)
         self.text = self.text_builder.get_text()
+
+        if doc_id is None:
+            doc_id = -1
 
         i = 0.0
         j = 0.0
@@ -644,7 +659,9 @@ class Resolver:
                 k += 1.0
                 res = self.predict_pronoun_proba(doc_id, pronoun)
                 try:
-                    answer_sh = self.answer_dict[doc_id][pronoun.sh]
+                    # answer_sh = self.answer_dict[doc_id][pronoun.sh]
+                    answer_sh = self.answer_dict[doc_id][pronoun.field('index')]
+
                 except:
                     print ("not found pronoun at", pronoun.sh, "at answer dict of doc", doc_id)
                     continue
@@ -656,8 +673,8 @@ class Resolver:
                 if answer_sh == res:
                     i += 1.0
                 else:
-                    rw = self.text.find_word(res)
-                    aw = self.text.find_word(answer_sh)
+                    rw = self.text.find_word_by_id(res)
+                    aw = self.text.find_word_by_id(answer_sh)
                     if rw is None:
                         print("wrong! ", res, "not found in text!", "instead of", answer_sh, aw.field("text"))
                     elif aw is None:
@@ -689,32 +706,27 @@ class Resolver:
             nfeats = feats
             #
             res1 = self.classifier.predict_proba(feats)
-
-            # res2 = self.model.predict(nfeats)
-
-            # res = 1.0 * res1[0] + 0.0 * res2[0]
-
             res = res1[0]
 
-            print("candidate", candidate.field("text"), candidate.sh, '-', res, '\n', decorate_features(nfeats.tolist()[0]), '\n')
+            # print("candidate", candidate.field("text"), candidate.sh, '-', res, '\n', decorate_features(nfeats.tolist()[0]), '\n')
             # reverse_probas[res[0][1]] = candidate
 
-# <<<<<<< HEAD
             reverse_probas[res[1] / nfeats[0][0]] = candidate
-# =======
-#             # print("candidate", candidate.field("text"), candidate.sh, res, '\n', decorate_features(nfeats.tolist()[0]), '\n')
-#             reverse_probas[res[0][1]] = candidate
-# >>>>>>> 14e6dfd... new 43 per cent
 
         antecedent = reverse_probas[max(reverse_probas.keys())]
 
-        print("pronoun ", pronoun.field('text'), "at ", pronoun.sh, "refers to ", antecedent.field('text'), "at ", antecedent.sh, '\n\n')
+        # print("pronoun ", pronoun.field('text'), "at ", pronoun.sh, "refers to ", antecedent.field('text'), "at ", antecedent.sh, '\n\n')
+        print("pronoun ", pronoun.field('text'), "at ", pronoun.field('index'), "refers to ", antecedent.field('text'), "at ", antecedent.field('index'), '\n\n')
 
-        pronoun.antecedent_sh = antecedent.sh
+
+        # pronoun.antecedent_sh = antecedent.sh
+        pronoun.antecedent_sh = antecedent.field('index')
 
         self.associations[pronoun] = antecedent
 
-        return antecedent.sh
+        return antecedent.field('index')
+        # return antecedent.sh
+
 
     def build_candidates_list(self, pronoun, length = 10):
         # sent_num = pronoun.field('sentence')
@@ -737,13 +749,17 @@ class Resolver:
                     self.been_candidate[tmp_word] = 1
         return candidates
 
-    def predict(self, doc_id):
+    def predict(self, doc_id, in_path = None):
         i = 0.
         j = 0.
 
         k = 0.
 
-        path = self.paths[doc_id]
+        if in_path is None:
+            path = self.paths[doc_id]
+        else:
+            path = in_path
+            doc_id = None
 
         self.text_builder.init_with_file(path, doc_id)
         self.text = self.text_builder.get_text()
@@ -756,14 +772,16 @@ class Resolver:
                 k += 1
                 if tmp is not None:
                     j += 1
-                    print(pronoun.field('text'), pronoun.sh, "refers to", tmp.field('text'), tmp.sh)
+                    # print(pronoun.field('text'), pronoun.sh, "refers to", tmp.field('text'), tmp.sh)
+                    print(pronoun.field('text'), pronoun.field('index'), "refers to", tmp.field('text'), tmp.field('index'))
+
                     try:
-                        if self.answer_dict[doc_id][pronoun.sh] == tmp.sh:
+                        if self.answer_dict[doc_id][pronoun.field('index')] == tmp.field('index'):
                             i += 1
                         else:
-                            print("wrong! ", tmp.sh, "instead of", self.answer_dict[doc_id][pronoun.sh])
+                            print("wrong! ", tmp.field('index'), "instead of", self.answer_dict[doc_id][pronoun.field('index')])
                     except:
-                        print("not found in answer list", doc_id, pronoun.sh)
+                        print("not found in answer list", doc_id, pronoun.field('index'))
             self.text_builder.forward()
             self.text = self.text_builder.get_text()
 
@@ -1108,12 +1126,24 @@ def basic_main():
 
 class TrainSampleData:
 
-    def __init__(self, filename):
+    def __init__(self, filename = None):
         self.doc_paths = dict()
         self.answers = dict()
         self.deps = dict()
 
-        self.parse_xml(filename)
+        if filename is not None:
+            self.parse_xml(filename)
+
+    def load(self, filename):
+        self.answers = dict()
+        with open(filename, 'rt') as fl:
+            while True:
+                tmp = fl.readline().split()
+                if len(tmp) == 0:
+                    break
+                print(tmp)
+                self.answers[int(tmp[0])] = int(tmp[1])
+
 
     def parse_xml(self, filename):
         import xml.etree.ElementTree as ET
@@ -1254,15 +1284,36 @@ class file_parser:
             print("parsed file", i)
 
 
-sample = TrainSampleData('../corpus/groups.xml')
+# sample = TrainSampleData('../corpus/groups.xml')
 #
 
+sample1 = TrainSampleData()
+sample1.load('a1')
+
 # print(list(sample.doc_paths.items())[:10])
-paths = sample.doc_paths
+paths = sample1.doc_paths
 
 pronoun_list = [PronounInfo(i, pronoun_feature_list[i]) for i in pronoun_text_list]
 
 
-cls = Resolver(sample.doc_paths, 1, pronoun_list)
-cls.evaluate(sample.answers)
+# cls = Resolver(sample.doc_paths, 1, pronoun_list)
+cls = Resolver(None, 1, pronoun_list)
+cls.answer_dict[-1] = sample1.answers
+
+with open("classifier", 'rb') as f:
+    cls.classifier = pickle.load(f)
+
+i1, j1 = cls.predict_proba(None, "output1.txt")
+
+sample = TrainSampleData()
+sample.load('a2')
+cls = Resolver(None, 1, pronoun_list)
+
+with open("classifier", 'rb') as f:
+    cls.classifier = pickle.load(f)
+
+cls.answer_dict[-1] = sample.answers
+i2, j2 = cls.predict_proba(None, "output2.txt")
+
+print((i1 + i2) / 2, (j1 + j2) / 2)
 
